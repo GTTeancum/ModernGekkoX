@@ -26,15 +26,18 @@ jobs:
           import hashlib,json,subprocess
           from pathlib import Path
           records=json.loads(Path('patches/xbox/0001-hashes.json').read_text())
-          allowed={'runtime/xbox/src/mgx_exec.c','runtime/xbox/include/mgx_exec.h','runtime/xbox/startup-probe/main.c','runtime/xbox/tests/run_exec_tests.py','runtime/xbox/tests/test_hid4.c','runtime/xbox/docs/hid4-profile.md','.github/workflows/xbox-runtime.yml'}
+          # Workflow changes require a separate connector commit, not a more
+          # privileged GITHUB_TOKEN. This job promotes only source/test/docs.
+          records.pop('.github/workflows/xbox-runtime.yml')
+          allowed={'runtime/xbox/src/mgx_exec.c','runtime/xbox/include/mgx_exec.h','runtime/xbox/startup-probe/main.c','runtime/xbox/tests/run_exec_tests.py','runtime/xbox/tests/test_hid4.c','runtime/xbox/docs/hid4-profile.md'}
           assert set(records)==allowed
           def sha(p):
               f=Path(p)
               return hashlib.sha256(f.read_bytes()).hexdigest() if f.is_file() else None
           if not all(sha(p)==v['after'] for p,v in records.items()):
               assert all(sha(p)==v['before'] for p,v in records.items()), 'unexpected source; refusing overwrite'
-              subprocess.run(['git','apply','--check','patches/xbox/0001-hid4.patch'],check=True)
-              subprocess.run(['git','apply','patches/xbox/0001-hid4.patch'],check=True)
+              subprocess.run(['git','apply','--check','--exclude=.github/workflows/xbox-runtime.yml','patches/xbox/0001-hid4.patch'],check=True)
+              subprocess.run(['git','apply','--exclude=.github/workflows/xbox-runtime.yml','patches/xbox/0001-hid4.patch'],check=True)
           assert all(sha(p)==v['after'] for p,v in records.items())
           PY
       - name: Install diagnostic tools
@@ -76,11 +79,11 @@ jobs:
           grep -q IMAGE_FILE_MACHINE_I386 artifacts/abi-coff-headers.txt
           cp runtime/xbox/loader-probe/bin/default.xbe artifacts/ModernGekkoX-loader-probe.xbe
           cp runtime/xbox/math-probe/bin/default.xbe artifacts/ModernGekkoX-math-probe.xbe
-      - name: Commit tested paths without forcing
+      - name: Commit tested source paths without forcing
         shell: bash
         run: |
           set -euo pipefail
-          git add runtime/xbox/src/mgx_exec.c runtime/xbox/include/mgx_exec.h runtime/xbox/startup-probe/main.c runtime/xbox/tests/run_exec_tests.py runtime/xbox/tests/test_hid4.c runtime/xbox/docs/hid4-profile.md .github/workflows/xbox-runtime.yml
+          git add runtime/xbox/src/mgx_exec.c runtime/xbox/include/mgx_exec.h runtime/xbox/startup-probe/main.c runtime/xbox/tests/run_exec_tests.py runtime/xbox/tests/test_hid4.c runtime/xbox/docs/hid4-profile.md
           if ! git diff --cached --quiet; then
             test "$(git ls-remote origin refs/heads/xbox/bootstrap | cut -f1)" = "$GITHUB_SHA"
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat: validate fixed Wii HID4 configuration and preserve code-write stops'

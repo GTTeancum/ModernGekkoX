@@ -6,8 +6,13 @@ DolRecomp's CPUState now explicitly selects Gekko (zero/default) or Broadway.
 HID4/SPR 1011 reaches a host callback only in supervisor Broadway mode. User-mode
 access raises the existing privilege exception first; absent callbacks and
 Gekko/unknown variants remain illegal. cpu_reset preserves the selected variant.
-CPUState has changed: rebuild all consumers. Existing module state-size validation
-must reject stale module descriptors. LLVM-module integration is not validated here.
+CPUState has changed: rebuild all consumers. On x64 its size grows from 3536 to
+3544 bytes, so the existing module size gate rejects the prior x64 layout. On the
+nxdk i386 target the field occupies tail padding at offset 3476: both old and new
+sizes are 3480. A size-only gate does NOT identify stale i386 modules. B006 uses
+fresh whole-program builds with dependency hashes, not loadable old modules.
+Explicit module ABI/revision gating is required before supporting mixed-version
+i386 modules. LLVM-module integration is not validated here.
 
 The Wii CPU profile presets HID4 to 0x83900000, from the pinned Dolphin boot
 setup. It accepts a read or a write of that identical value only. Every single-bit

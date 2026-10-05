@@ -30,10 +30,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: GTTeancum/DolRecompX
-          ref: 43bfa983b00948ddc6dd45d93227e6d50492de07
+          ref: f228472adc3da3ef3123dbb72acc91b53fd020ab
           path: compiler
           persist-credentials: false
-      - name: Validate fail-closed execution and CPU/cache/PMU profile (synthetic only)
+      - name: Validate fail-closed execution and CPU/cache/PMU/HID4 profile (synthetic only)
         shell: bash
         run: |
           set -euo pipefail
@@ -70,14 +70,14 @@ jobs:
           git rev-parse HEAD > artifacts/REVISION.txt
           git -C compiler rev-parse HEAD > artifacts/COMPILER-REVISION.txt
           git -C sdk/nxdk rev-parse HEAD > artifacts/NXDK-REVISION.txt
-          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B005-source.tar.gz
+          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B006-source.tar.gz
           find sdk/nxdk/lib -name '*.lib' -type f > artifacts/sdk-link-files.txt
           printf '%s\n' sdk/nxdk/tools/cxbe/cxbe >> artifacts/sdk-link-files.txt
-          tar -czf artifacts/nxdk-B005-link-support.tar.gz -T artifacts/sdk-link-files.txt
+          tar -czf artifacts/nxdk-B006-link-support.tar.gz -T artifacts/sdk-link-files.txt
           sha256sum artifacts/*.xbe artifacts/*.tar.gz > artifacts/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ModernGekkoX-B005-validation
+          name: ModernGekkoX-B006-validation
           path: artifacts/
           retention-days: 14

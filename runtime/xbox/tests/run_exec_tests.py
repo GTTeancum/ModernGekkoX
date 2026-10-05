@@ -17,6 +17,9 @@ def main():
    cmd+=['-c',str(f),'-o',str(o)];commands.append(cmd);subprocess.run(cmd,check=True);objects.append(str(o))
   exe=temp/'exec-tests';cmd=common+objects+['-lm','-o',str(exe)];commands.append(cmd);subprocess.run(cmd,check=True)
   result=subprocess.run([str(exe)],check=True,capture_output=True,text=True,timeout=15);print(result.stdout,end='')
+  boot_obj=temp/'boot.o';cmd=common+['-c',str(ROOT/'tests/test_boot_profile.c'),'-o',str(boot_obj)];commands.append(cmd);subprocess.run(cmd,check=True)
+  boot_exe=temp/'boot-tests';cmd=common+objects[:-1]+[str(boot_obj),'-lm','-o',str(boot_exe)];commands.append(cmd);subprocess.run(cmd,check=True)
+  boot=subprocess.run([str(boot_exe)],check=True,capture_output=True,text=True,timeout=15);print(boot.stdout,end='')
   if a.output:
-   a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':23,'sanitizers':a.sanitize,'output':result.stdout,'commands':commands,'game_data_used':False},indent=2)+'\n')
+   a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':40,'sanitizers':a.sanitize,'output':result.stdout+boot.stdout,'commands':commands,'game_data_used':False},indent=2)+'\n')
 if __name__=='__main__':main()

@@ -25,6 +25,9 @@ class TraceBridgeTests(unittest.TestCase):
  def test_unsupported_source_shape(self):
   (self.g/'chunks'/'bad.c').write_text('/* not a generated chunk */');self.trace('0x80001000')
   with self.assertRaises(ValueError):tool.generate(self.g,self.t,self.o)
+ def test_truncated_trace_rejected(self):
+  self.chunk();self.t.write_text(json.dumps({'trace':['0x80001000'],'trace_truncated':True}))
+  with self.assertRaises(ValueError):tool.generate(self.g,self.t,self.o)
  def test_reproducible(self):
   self.chunk();self.trace('0x80001000');a=tool.generate(self.g,self.t,self.o);b=tool.generate(self.g,self.t,self.o);self.assertEqual(a,b)
 if __name__=='__main__':unittest.main()

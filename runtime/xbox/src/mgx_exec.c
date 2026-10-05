@@ -33,10 +33,41 @@ static void *pointer_external(CPUState *cpu,uint32_t address,uint32_t width){
     stop(run_for(cpu),"unimplemented-external-pointer",address,0,width,0);return NULL;
 }
 static uint32_t read_special(CPUState *cpu,uint16_t spr,uint32_t cia){
-    cpu->pc=cia;stop(run_for(cpu),"unimplemented-spr-read",spr,0,4,0);return 0;
+    mgx_execution *r=run_for(cpu);cpu->pc=cia;
+    if(r->profile==MGX_BOOT_WII_CPU && spr==1008){++r->hid0_reads;return r->hid0;}
+    if(r->profile==MGX_BOOT_WII_CPU && spr==1017){++r->l2_reads;return r->l2cr;}
+    stop(r,"unimplemented-spr-read",spr,0,4,0);return 0;
 }
 static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia){
-    cpu->pc=cia;stop(run_for(cpu),"unimplemented-spr-write",spr,value,4,0);
+    mgx_execution *r=run_for(cpu);cpu->pc=cia;
+    if(r->profile==MGX_BOOT_WII_CPU && spr==1008){
+        /* Only the ordinary cache-enable bits and I-cache invalidate request
+           may change. DCFI is deliberately not self-cleared (Dolphin/Gekko
+           reference), and changes to it fail: dirty-line loss is unmodelled. */
+        const uint32_t permitted=MGX_HID0_ICE|MGX_HID0_DCE|MGX_HID0_ICFI;
+        if((r->hid0^value)&~permitted)
+            stop(r,"unsupported-hid0-transition",spr,value,4,0);
+        ppc_memory_fence();
+        if(value&MGX_HID0_ICFI)++r->icache_invalidations;
+        r->hid0=value&~MGX_HID0_ICFI;++r->hid0_writes;
+        return;
+    }
+    if(r->profile==MGX_BOOT_WII_CPU && spr==1017){
+        const uint32_t enable=0x80000000u,invalidate=0x00200000u;
+        /* This CPU-only profile starts with an empty, disabled abstract L2
+           (Dolphin ResetRegisters). No SRAM timing/test configuration accepted.
+           Invalidation empties an already coherent abstract cache synchronously;
+           there is no queued operation, so read-only L2IP remains clear. */
+        if(value&~(enable|invalidate|1u))
+            stop(r,"unsupported-l2cr-transition",spr,value,4,0);
+        if((value&enable) && (value&invalidate))
+            stop(r,"invalid-l2-invalidate-while-enabled",spr,value,4,0);
+        if((value&invalidate) && !(r->l2cr&invalidate)){
+            ppc_memory_fence();++r->l2_invalidations;
+        }
+        r->l2cr=value&~1u;++r->l2_writes;ppc_memory_fence();return;
+    }
+    stop(r,"unimplemented-spr-write",spr,value,4,0);
 }
 static void fallback(CPUState *cpu,uint32_t raw,uint32_t cia){
     cpu->pc=cia;stop(run_for(cpu),"unimplemented-instruction",0,0,4,raw);
@@ -48,17 +79,44 @@ static void external32_write(CPUState *cpu,uint32_t address,uint32_t value,uint8
     stop(run_for(cpu),"unimplemented-external-control-write",address,value,4,rid);
 }
 static void cache(CPUState *cpu,uint8_t operation,uint32_t address,uint32_t cia){
-    cpu->pc=cia;stop(run_for(cpu),"unimplemented-cache-control",address,operation,0,0);
+    mgx_execution *r=run_for(cpu);cpu->pc=cia;
+    if(r->profile==MGX_BOOT_WII_CPU && operation<=PPC_CACHE_ICBI){
+        const uint32_t line=address&~31u;
+        if(operation==PPC_CACHE_DCBI){
+            /* Only already-invalid locked-cache lines are supported. This
+               models the harmless startup disable sequence, not dirty RAM
+               invalidation or DMA. Never erase or pretend to flush data. */
+            if(line>=0xe0000000u && line<0xe0004000u){
+                const uint32_t index=(line-0xe0000000u)>>5;
+                if(cpu->locked_cache_valid[index])
+                    stop(r,"unsupported-live-locked-cache-invalidate",address,operation,0,0);
+                cpu->locked_cache_tag[index]=0;
+                ++r->locked_cache_invalidations;
+            }else stop(r,"unsupported-data-cache-invalidate",address,operation,0,0);
+        }else if(!mgx_memory_pointer(&r->memory,line,32)){
+            stop(r,"unsupported-cache-address",address,operation,0,0);
+        }
+        /* No dirty cache, asynchronous device or writable translated text in
+           this profile: RAM stores are already visible; ICBI cannot stale AOT. */
+        ppc_memory_fence();++r->cache_events[operation];return;
+    }
+    stop(r,"unimplemented-cache-control",address,operation,0,0);
 }
-void mgx_exec_run(mgx_execution *r,CPUState *cpu,const mgx_memory *memory,
-                  const mgx_dol_plan *plan,mgx_dispatch dispatch,uint32_t limit){
+void mgx_exec_run_profile(mgx_execution *r,CPUState *cpu,const mgx_memory *memory,
+                  const mgx_dol_plan *plan,mgx_dispatch dispatch,uint32_t limit,
+                  mgx_boot_profile profile){
     if(!r)return;
     memset(r,0,sizeof(*r));r->stop.reason="invalid-execution-arguments";
-    if(!cpu||!memory||!plan||!dispatch||!limit||plan->count>18||cpu->ram!=memory->mem1||
+    if((profile!=MGX_BOOT_STRICT&&profile!=MGX_BOOT_WII_CPU)||!cpu||!memory||!plan||!dispatch||!limit||plan->count>18||cpu->ram!=memory->mem1||
        cpu->ram_size!=memory->mem1_size||cpu->mem2!=memory->mem2||cpu->mem2_size!=memory->mem2_size)return;
     for(uint32_t i=0;i<plan->count;++i)
         if(plan->sections[i].executable&&plan->sections[i].bank!=0)return;
-    r->cpu=cpu;r->memory=*memory;r->plan=plan;
+    r->cpu=cpu;r->memory=*memory;r->plan=plan;r->profile=profile;
+    if(profile==MGX_BOOT_WII_CPU){
+        /* Dolphin CBoot::SetupMSR / SetupHID(is_wii=true). Deliberately only
+           CPU register presets; low-memory handoff, BATs and IOS are absent. */
+        r->hid0=0x0011c664u;cpu->msr=0x00002032u;cpu->hid2=0xe0000000u;
+    }
     unsigned old_depth=dolrecomp_call_depth;dolrecomp_call_depth=0;
     PPCMemWriteJournal old_journal=g_mem_write_journal;void *old_user=g_mem_write_journal_user;
     cpu->external_user_data=r;cpu->external_read=read_external;cpu->external_write=write_external;
@@ -69,7 +127,7 @@ void mgx_exec_run(mgx_execution *r,CPUState *cpu,const mgx_memory *memory,
     if(!setjmp(r->escape)){
         r->stop.reason="dispatch-budget-exhausted";
         while(r->stop.dispatches<limit){
-            if(r->stop.trace_count<32)r->stop.trace[r->stop.trace_count++]=cpu->pc;
+            if(r->stop.trace_count<MGX_TRACE_CAPACITY)r->stop.trace[r->stop.trace_count++]=cpu->pc;
             ++r->stop.dispatches;cpu->downcount=0;
             if(!dispatch(cpu,cpu->pc)){r->stop.reason="untranslated-address";break;}
             if(cpu->exception){r->stop.reason="guest-exception";break;}
@@ -78,4 +136,9 @@ void mgx_exec_run(mgx_execution *r,CPUState *cpu,const mgx_memory *memory,
     }
     ppc_set_mem_write_journal(old_journal,old_user);
     dolrecomp_call_depth=old_depth;
+}
+
+void mgx_exec_run(mgx_execution *r,CPUState *cpu,const mgx_memory *memory,
+                  const mgx_dol_plan *plan,mgx_dispatch dispatch,uint32_t limit){
+    mgx_exec_run_profile(r,cpu,memory,plan,dispatch,limit,MGX_BOOT_STRICT);
 }

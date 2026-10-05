@@ -9,7 +9,9 @@ import argparse,hashlib,json,re
 from pathlib import Path
 def generate(generated,trace,output):
  generated=Path(generated);trace=Path(trace);output=Path(output)
- report=json.loads(trace.read_text());addresses=sorted(set(int(x,0) for x in report['trace']))
+ report=json.loads(trace.read_text())
+ if report.get('trace_truncated'):raise ValueError('truncated traces cannot define a diagnostic closure')
+ addresses=sorted(set(int(x,0) for x in report['trace']))
  if not addresses:raise ValueError('empty trace')
  found={};sources={}
  for f in sorted((generated/'chunks').glob('*.c')):

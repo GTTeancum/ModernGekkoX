@@ -1,4 +1,4 @@
-name: Xbox runtime loader
+name: Xbox runtime validation
 
 on:
   push:
@@ -10,19 +10,23 @@ permissions:
   contents: read
 
 jobs:
-  loader:
+  runtime:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Run synthetic loader tests
+      - name: Install host build and diagnostic tools
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm qemu-user
+      - name: Validate loader and math (synthetic data only)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
           python3 runtime/xbox/tests/test_loader.py -v 2>&1 | tee artifacts/loader-tests.log
+          python3 runtime/xbox/tests/test_math.py --vectors artifacts/fma-vectors.bin --output artifacts/math-validation.json 2>&1 | tee artifacts/math-tests.log
+          python3 runtime/xbox/tests/run_math_i386.py --vectors artifacts/fma-vectors.bin --output artifacts/i386 --qemu 2>&1 | tee artifacts/math-i386.log
       - uses: actions/checkout@v4
         with:
           repository: XboxDev/nxdk
@@ -30,31 +34,33 @@ jobs:
           path: sdk/nxdk
           submodules: recursive
           persist-credentials: false
-      - name: Install host build tools
-        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
-      - name: Build loader diagnostic (not a game boot)
+      - name: Build Xbox diagnostics (not game boots)
         shell: bash
         run: |
           set -euo pipefail
           export NXDK_DIR="$PWD/sdk/nxdk"
           export PATH="$NXDK_DIR/bin:$PATH"
           make -C runtime/xbox/loader-probe -j2 2>&1 | tee artifacts/loader-xbe-build.log
+          make -C runtime/xbox/math-probe -j2 2>&1 | tee artifacts/math-xbe-build.log
           cp runtime/xbox/loader-probe/bin/default.xbe artifacts/ModernGekkoX-loader-probe.xbe
-          llvm-readobj --file-headers runtime/xbox/loader-probe/main.exe > artifacts/loader-pe-headers.txt
-          grep -q IMAGE_FILE_MACHINE_I386 artifacts/loader-pe-headers.txt
-          python3 -c "from pathlib import Path; assert Path('artifacts/ModernGekkoX-loader-probe.xbe').read_bytes()[:4] == b'XBEH'"
-      - name: Export tracked source and revisions (no game data)
+          cp runtime/xbox/math-probe/bin/default.xbe artifacts/ModernGekkoX-math-probe.xbe
+          llvm-readobj --file-headers runtime/xbox/math-probe/main.exe > artifacts/math-pe-headers.txt
+          llvm-objdump -d runtime/xbox/src/mgx_math.obj > artifacts/math-xbox-disassembly.txt
+          grep -q IMAGE_FILE_MACHINE_I386 artifacts/math-pe-headers.txt
+      - name: Export source and SDK link support (no game data, no fonts)
         shell: bash
         run: |
           set -euo pipefail
           git rev-parse HEAD > artifacts/REVISION.txt
           git -C sdk/nxdk rev-parse HEAD > artifacts/NXDK-REVISION.txt
-          git -C sdk/nxdk submodule status --recursive > artifacts/NXDK-SUBMODULES.txt
-          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B002-source.tar.gz
-          sha256sum artifacts/ModernGekkoX-loader-probe.xbe artifacts/ModernGekkoX-B002-source.tar.gz > artifacts/SHA256SUMS.txt
+          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B003-source.tar.gz
+          find sdk/nxdk/lib -name '*.lib' -type f > artifacts/sdk-link-files.txt
+          printf '%s\n' sdk/nxdk/tools/cxbe/cxbe >> artifacts/sdk-link-files.txt
+          tar -czf artifacts/nxdk-B003-link-support.tar.gz -T artifacts/sdk-link-files.txt
+          sha256sum artifacts/*.xbe artifacts/*.tar.gz > artifacts/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ModernGekkoX-B002-loader
+          name: ModernGekkoX-B003-validation
           path: artifacts/
           retention-days: 14

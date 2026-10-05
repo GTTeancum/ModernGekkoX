@@ -12,7 +12,7 @@
    no devices or pending DMA. Cache timings/dirty-line loss are not emulated. */
 /* WII_IRQ extends WII_CPU with an explicit reference interrupt-register
    snapshot. It is not a complete device model or an apploader handoff. */
-typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ, MGX_BOOT_WII_AUDIO, MGX_BOOT_WII_EXI, MGX_BOOT_WII_EXI_PROBE } mgx_boot_profile;
+typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ, MGX_BOOT_WII_AUDIO, MGX_BOOT_WII_EXI, MGX_BOOT_WII_EXI_PROBE, MGX_BOOT_WII_SERIAL } mgx_boot_profile;
 /* WII_AUDIO adds halted DSP and stopped AI control/mask registers only.
    No DSP execution, reset completion, DMA, mailboxes or audio output. */
 #define MGX_DSP_IDLE_CONTROL 0x00000804u
@@ -30,6 +30,14 @@ typedef struct {
     uint32_t immediate[3],transfers[3],transfer_bytes[3];
 } mgx_boot_exi;
 #define MGX_MMIO_TRACE_CAPACITY 64u
+#define MGX_SERIAL_MMIO_CAPACITY 4096u
+#define MGX_SERIAL_CAPACITY 2048u
+/* Narrow EUART endpoint. No ROM, SRAM, RTC or generic device responses. */
+typedef struct {
+    uint32_t command,command_bytes,commands,config_bytes,output_bytes,queue_reads;
+    uint32_t config_f2,config_f3;
+    uint8_t output[MGX_SERIAL_CAPACITY];
+} mgx_boot_serial;
 typedef struct {
     uint32_t pc,address,value,width,is_write;
 } mgx_mmio_event;
@@ -37,9 +45,9 @@ typedef struct {
     uint32_t pi_cause,pi_mask,pi_pending;
     uint32_t ppc_flags,ppc_mask,mi_mask;
     uint32_t reads,writes,event_count;
-    mgx_mmio_event events[MGX_MMIO_TRACE_CAPACITY];
+    mgx_mmio_event events[MGX_SERIAL_MMIO_CAPACITY];
 } mgx_boot_irq;
-#define MGX_TRACE_CAPACITY 4096u
+#define MGX_TRACE_CAPACITY 16384u
 #define MGX_HID0_ICE  0x00008000u
 #define MGX_HID0_DCE  0x00004000u
 #define MGX_HID0_ICFI 0x00000800u
@@ -81,6 +89,7 @@ typedef struct {
     mgx_boot_irq irq;
     mgx_boot_audio audio;
     mgx_boot_exi exi;
+    mgx_boot_serial serial;
     uint32_t di_config,di_config_reads;
     jmp_buf escape;
 } mgx_execution;

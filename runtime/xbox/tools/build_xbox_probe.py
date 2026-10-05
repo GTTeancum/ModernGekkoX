@@ -38,6 +38,8 @@ def main():
     ap.add_argument('--output',type=Path,required=True)
     ap.add_argument('--optimization',choices=['1','z'],default='1')
     ap.add_argument('--reuse-report',type=Path)
+    ap.add_argument('--memory-abi',choices=['cdecl','fastcall'],default='cdecl',
+                    help='experimental 32-bit memory-helper convention; SDK ABI unchanged')
     ap.add_argument('--jobs',type=int,default=2)
     a=ap.parse_args()
     if not 1<=a.jobs<=8:ap.error("--jobs must be in 1..8")
@@ -63,6 +65,7 @@ def main():
         if old['optimization']!=a.optimization:raise ValueError('cache optimization mismatch')
     flags=[str(sdk/'bin/nxdk-cc'),'-std=gnu11','-O'+a.optimization,'-fno-fast-math',
            '-ffp-contract=off','-frounding-math','-I'+str(src),'-I'+str(rt/'include'),'-I'+str(gen)]
+    if a.memory_abi=='fastcall':flags+=['-DDOLRECOMP_X86_FASTCALL=1']
     records=[];commands=[];all_old=old.get('objects',[])
     def compile_one(pair):
         index,f=pair
@@ -107,7 +110,7 @@ def main():
     commands.append(cmd);r=subprocess.run(cmd,capture_output=True,text=True,timeout=60)
     (out/'cxbe.log').write_text(r.stdout+r.stderr)
     if r.returncode:raise RuntimeError(r.stderr)
-    result={'target':'i386-pc-win32/pentium3','optimization':a.optimization,'compiler_identity':identity,
+    result={'target':'i386-pc-win32/pentium3','optimization':a.optimization,'memory_abi':a.memory_abi,'compiler_identity':identity,
             'nxdk_revision':lock['revision'],'generated_chunks':len(chunks),'all_generated_chunks_linked':True,
             'objects_linked':len(records),'reused_verified_objects':sum(r['reused'] for r in records),
             'compiled_objects':sum(not r['reused'] for r in records),

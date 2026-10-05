@@ -32,9 +32,15 @@ class ProbeCLI(unittest.TestCase):
   self.assertEqual(d['bootstrap'],'reference-wii-audio-idle');self.assertEqual(d['dsp_control'],'0x00000804');self.assertEqual(d['ai_control'],'0x00000042');self.assertEqual(d['pi_cause'],'0x00010100');self.assertEqual(d['mmio_events'],[])
  def test_exi_profile_default(self):
   r=self.invoke();self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
-  self.assertEqual(d['bootstrap'],'reference-wii-exi-absent-sp1')
+  self.assertEqual(d['bootstrap'],'reference-wii-euart-capture')
   self.assertEqual(d['exi_status'],['0x00000800','0x00000880','0x00000000'])
   self.assertEqual(d['exi_reads'],[0,0,0]);self.assertEqual(d['exi_writes'],[0,0,0])
+ def test_probe_only(self):
+  r=self.invoke('--probe-only');self.assertEqual(r.returncode,0,r.stderr)
+  self.assertEqual(json.loads(r.stdout)['bootstrap'],'reference-wii-exi-absent-sp1')
+ def test_probe_conflicts(self):
+  for other in ['--strict','--cpu-only','--irq-only','--audio-only','--exi-only','--probe-only']:
+   for args in [('--probe-only',other),(other,'--probe-only')]:self.assertEqual(self.invoke(*args).returncode,2)
  def test_exi_legacy(self):
   r=self.invoke('--exi-only');self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
   self.assertEqual(d['bootstrap'],'reference-wii-exi-no-cards');self.assertEqual(d['exi_probe_transfers'],0)

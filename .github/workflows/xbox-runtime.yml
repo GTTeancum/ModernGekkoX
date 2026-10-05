@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: GTTeancum/DolRecompX
-          ref: d3248c476c06c45487cc5d0e1d898056415c7816
+          ref: 0ba69ce113a45ac095841301992869edb8197d2b
           path: compiler
           persist-credentials: false
       - name: Validate fail-closed execution and CPU/cache/PMU/HID4 profile (synthetic only)
@@ -63,6 +63,7 @@ jobs:
           llvm-readobj --file-headers artifacts/mgx_exec-xbox.obj artifacts/cpu-xbox.obj > artifacts/exec-coff-headers.txt
           grep -q IMAGE_FILE_MACHINE_I386 artifacts/exec-coff-headers.txt
           python3 runtime/xbox/tests/test_xbox_builder.py --sdk sdk/nxdk --compiler-source compiler -v 2>&1 | tee artifacts/nxdk-builder-tests.log
+          python3 runtime/xbox/tests/test_memory_abi.py --sdk sdk/nxdk --compiler-source compiler --output artifacts/memory-abi --qemu 2>&1 | tee artifacts/memory-abi.log
           cp runtime/xbox/loader-probe/bin/default.xbe artifacts/ModernGekkoX-loader-probe.xbe
           cp runtime/xbox/math-probe/bin/default.xbe artifacts/ModernGekkoX-math-probe.xbe
           llvm-readobj --file-headers runtime/xbox/math-probe/main.exe > artifacts/math-pe-headers.txt

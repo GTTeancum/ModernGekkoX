@@ -32,10 +32,20 @@ static void write_external(CPUState *cpu,uint32_t address,uint64_t value,uint8_t
 static void *pointer_external(CPUState *cpu,uint32_t address,uint32_t width){
     stop(run_for(cpu),"unimplemented-external-pointer",address,0,width,0);return NULL;
 }
+/* Supervisor PMCs are 953,954,957,958 (not a contiguous range).
+   Aliases and SIA are intentionally not accepted by this bounded profile. */
+static int pmu_counter_index(uint16_t spr){
+    switch(spr){case 953:return 0;case 954:return 1;case 957:return 2;case 958:return 3;default:return -1;}
+}
 static uint32_t read_special(CPUState *cpu,uint16_t spr,uint32_t cia){
     mgx_execution *r=run_for(cpu);cpu->pc=cia;
     if(r->profile==MGX_BOOT_WII_CPU && spr==1008){++r->hid0_reads;return r->hid0;}
     if(r->profile==MGX_BOOT_WII_CPU && spr==1017){++r->l2_reads;return r->l2cr;}
+    if(r->profile==MGX_BOOT_WII_CPU){
+        if(spr==952 || spr==956){++r->pmu_reads;return r->pmu_control[spr==956];}
+        const int index=pmu_counter_index(spr);
+        if(index>=0){++r->pmu_reads;return r->pmu_counter[index];}
+    }
     stop(r,"unimplemented-spr-read",spr,0,4,0);return 0;
 }
 static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia){
@@ -66,6 +76,21 @@ static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia
             ppc_memory_fence();++r->l2_invalidations;
         }
         r->l2cr=value&~1u;++r->l2_writes;ppc_memory_fence();return;
+    }
+    if(r->profile==MGX_BOOT_WII_CPU){
+        if(spr==952 || spr==956){
+            /* Zero selects no counted events and disables PMU interrupts.
+               Reject ANY active/freeze/trigger/reserved configuration before
+               publishing state: no unimplemented event can appear to count. */
+            if(value)stop(r,"unsupported-pmu-configuration",spr,value,4,0);
+            r->pmu_control[spr==956]=value;++r->pmu_control_writes;return;
+        }
+        const int index=pmu_counter_index(spr);
+        if(index>=0){
+            /* Invariant: both controls remain zero throughout this run.
+               PMCs are still writable/readable storage, never fake cycles. */
+            r->pmu_counter[index]=value;++r->pmu_counter_writes;return;
+        }
     }
     stop(r,"unimplemented-spr-write",spr,value,4,0);
 }

@@ -31,6 +31,9 @@ typedef struct {
     uint32_t l2cr,l2_reads,l2_writes,l2_invalidations;
     uint32_t hid0, hid0_reads, hid0_writes, icache_invalidations;
     uint32_t cache_events[4], locked_cache_invalidations;
+    /* MMCR0/MMCR1 and PMC1..4. Only event-disabled control is supported. */
+    uint32_t pmu_control[2], pmu_counter[4];
+    uint32_t pmu_reads, pmu_control_writes, pmu_counter_writes;
     jmp_buf escape;
 } mgx_execution;
 void mgx_exec_run(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,

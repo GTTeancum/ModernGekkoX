@@ -42,13 +42,21 @@ int main(int argc,char **argv){
     PRINT("{\"diagnostic\":\"bounded-generated-startup\",\"bootstrap\":\"%s\",\"entry\":\"0x%08lx\",\"stop\":\"%s\",\"pc\":\"0x%08lx\",\"address\":\"0x%08lx\",\"raw\":\"0x%08lx\",\"dispatches\":%lu,\"exception\":%lu,\"gpr1\":\"0x%08lx\",\"lr\":\"0x%08lx\",\"game_booted\":false,\"trace\":[",
           profile==MGX_BOOT_WII_CPU?"dolphin-wii-cpu-only":"zero-state-plus-DOL",(unsigned long)plan.entry,run->stop.reason,(unsigned long)run->stop.pc,(unsigned long)run->stop.address,(unsigned long)run->stop.raw,(unsigned long)run->stop.dispatches,(unsigned long)cpu->exception,(unsigned long)cpu->gpr[1],(unsigned long)cpu->lr);
     for(uint32_t i=0;i<run->stop.trace_count;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)run->stop.trace[i]);
-    PRINT("],\"hid0\":\"0x%08lx\",\"hid0_reads\":%lu,\"hid0_writes\":%lu,\"icache_invalidations\":%lu,\"cache_events\":[%lu,%lu,%lu,%lu],\"locked_cache_invalidations\":%lu,\"trace_truncated\":%s,\"value\":\"0x%08lx\",\"l2cr\":\"0x%08lx\",\"l2_reads\":%lu,\"l2_writes\":%lu,\"l2_invalidations\":%lu}\n",
+    PRINT("],\"hid0\":\"0x%08lx\",\"hid0_reads\":%lu,\"hid0_writes\":%lu,\"icache_invalidations\":%lu,\"cache_events\":[%lu,%lu,%lu,%lu],\"locked_cache_invalidations\":%lu,\"trace_truncated\":%s,\"value\":\"0x%08lx\",\"l2cr\":\"0x%08lx\",\"l2_reads\":%lu,\"l2_writes\":%lu,\"l2_invalidations\":%lu",
           (unsigned long)run->hid0,(unsigned long)run->hid0_reads,(unsigned long)run->hid0_writes,
           (unsigned long)run->icache_invalidations,(unsigned long)run->cache_events[0],
           (unsigned long)run->cache_events[1],(unsigned long)run->cache_events[2],
           (unsigned long)run->cache_events[3],(unsigned long)run->locked_cache_invalidations,
           run->stop.dispatches>run->stop.trace_count?"true":"false",(unsigned long)run->stop.value,(unsigned long)run->l2cr,(unsigned long)run->l2_reads,
-          (unsigned long)run->l2_writes,(unsigned long)run->l2_invalidations);cpu_free(cpu);free(cpu);free(run);
+          (unsigned long)run->l2_writes,(unsigned long)run->l2_invalidations);
+    PRINT(",\"pmu_control\":[\"0x%08lx\",\"0x%08lx\"],\"pmu_counter\":[\"0x%08lx\",\"0x%08lx\",\"0x%08lx\",\"0x%08lx\"],\"pmu_reads\":%lu,\"pmu_control_writes\":%lu,\"pmu_counter_writes\":%lu,\"srr0\":\"0x%08lx\",\"srr1\":\"0x%08lx\",\"msr\":\"0x%08lx\"}\n",
+          (unsigned long)run->pmu_control[0],(unsigned long)run->pmu_control[1],
+          (unsigned long)run->pmu_counter[0],(unsigned long)run->pmu_counter[1],
+          (unsigned long)run->pmu_counter[2],(unsigned long)run->pmu_counter[3],
+          (unsigned long)run->pmu_reads,(unsigned long)run->pmu_control_writes,
+          (unsigned long)run->pmu_counter_writes,(unsigned long)cpu->srr0,
+          (unsigned long)cpu->srr1,(unsigned long)cpu->msr);
+    cpu_free(cpu);free(cpu);free(run);
 #ifdef NXDK
     for(;;)Sleep(1000);
 #endif

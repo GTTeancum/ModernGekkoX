@@ -20,6 +20,9 @@ def main():
   boot_obj=temp/'boot.o';cmd=common+['-c',str(ROOT/'tests/test_boot_profile.c'),'-o',str(boot_obj)];commands.append(cmd);subprocess.run(cmd,check=True)
   boot_exe=temp/'boot-tests';cmd=common+objects[:-1]+[str(boot_obj),'-lm','-o',str(boot_exe)];commands.append(cmd);subprocess.run(cmd,check=True)
   boot=subprocess.run([str(boot_exe)],check=True,capture_output=True,text=True,timeout=15);print(boot.stdout,end='')
+  pmu_obj=temp/'pmu.o';cmd=common+['-c',str(ROOT/'tests/test_pmu.c'),'-o',str(pmu_obj)];commands.append(cmd);subprocess.run(cmd,check=True)
+  pmu_exe=temp/'pmu-tests';cmd=common+objects[:-1]+[str(pmu_obj),'-lm','-o',str(pmu_exe)];commands.append(cmd);subprocess.run(cmd,check=True)
+  pmu=subprocess.run([str(pmu_exe)],check=True,capture_output=True,text=True,timeout=15);print(pmu.stdout,end='')
   if a.output:
-   a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':40,'sanitizers':a.sanitize,'output':result.stdout+boot.stdout,'commands':commands,'game_data_used':False},indent=2)+'\n')
+   a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':65,'sanitizers':a.sanitize,'output':result.stdout+boot.stdout+pmu.stdout,'commands':commands,'game_data_used':False},indent=2)+'\n')
 if __name__=='__main__':main()

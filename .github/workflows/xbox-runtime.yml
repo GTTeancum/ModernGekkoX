@@ -33,12 +33,13 @@ jobs:
           ref: 43bfa983b00948ddc6dd45d93227e6d50492de07
           path: compiler
           persist-credentials: false
-      - name: Validate fail-closed execution and CPU/cache profile (synthetic only)
+      - name: Validate fail-closed execution and CPU/cache/PMU profile (synthetic only)
         shell: bash
         run: |
           set -euo pipefail
           python3 runtime/xbox/tests/run_exec_tests.py --compiler-source compiler --sanitize --output artifacts/exec-tests.json 2>&1 | tee artifacts/exec-tests.log
           python3 runtime/xbox/tests/test_trace_bridge.py -v 2>&1 | tee artifacts/trace-bridge-tests.log
+          python3 runtime/xbox/tests/test_host_builder.py -v 2>&1 | tee artifacts/host-builder-tests.log
       - uses: actions/checkout@v4
         with:
           repository: XboxDev/nxdk
@@ -69,14 +70,14 @@ jobs:
           git rev-parse HEAD > artifacts/REVISION.txt
           git -C compiler rev-parse HEAD > artifacts/COMPILER-REVISION.txt
           git -C sdk/nxdk rev-parse HEAD > artifacts/NXDK-REVISION.txt
-          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B004-source.tar.gz
+          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B005-source.tar.gz
           find sdk/nxdk/lib -name '*.lib' -type f > artifacts/sdk-link-files.txt
           printf '%s\n' sdk/nxdk/tools/cxbe/cxbe >> artifacts/sdk-link-files.txt
-          tar -czf artifacts/nxdk-B004-link-support.tar.gz -T artifacts/sdk-link-files.txt
+          tar -czf artifacts/nxdk-B005-link-support.tar.gz -T artifacts/sdk-link-files.txt
           sha256sum artifacts/*.xbe artifacts/*.tar.gz > artifacts/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ModernGekkoX-B004-validation
+          name: ModernGekkoX-B005-validation
           path: artifacts/
           retention-days: 14

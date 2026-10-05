@@ -1,0 +1,9 @@
+{
+  "runtime/xbox/src/mgx_exec.c":{"before":"47b9129d8c2d22048bf140044dadf88d29839ec5689e534dcda2e5504ceafdec","after":"bf8dd3c04baf3021b1b806062b2ef3754a1fa227ae1f3da852da3ac6246c166b"},
+  "runtime/xbox/include/mgx_exec.h":{"before":"fb3fb1b8a874e33a677879286b7bc693358411f37329072e4810a766e31687ba","after":"0af96e01a95166b78891a41febcb646fd4265465627537e22bfc06eb4eed532c"},
+  "runtime/xbox/startup-probe/main.c":{"before":"5aa1d687b0df8cdeba90594ebabbe8f427b67a25b9ec2f4a8c9e0c2eefb9aaa7","after":"079d636c794264bb7c00f30e80c6949017abe8399a1aa40720503909850f2930"},
+  "runtime/xbox/tests/run_exec_tests.py":{"before":"dd228d412e798a07957ca8ea9c9eaaba274dec928b415e38e908ccf8fda791b3","after":"89878c5f0be50fb3b78bdd44440c579fb4e87eca2adb128cf231b1f48070c92a"},
+  "runtime/xbox/tests/test_hid4.c":{"before":null,"after":"3992650a2d0da2a44a68c56b1f32208c2063c2df0b7574f77b0b6ee6a7ea3c7e"},
+  "runtime/xbox/docs/hid4-profile.md":{"before":null,"after":"f202d37574c9ce6d32425c2cebe5eda550e76ef44f1b5a63c9f8ff2df376c71c"},
+  ".github/workflows/xbox-runtime.yml":{"before":"dbac023e994b1a2fc883ce5b19c71c4cef3b43c5c8a734386d5cb42667a0b2c3","after":"a699cbf5f777cf1e489618732866f06adfb1ca3f4c6654b3a548f1472b23122b"}
+}

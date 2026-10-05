@@ -1,0 +1,103 @@
+name: Xbox fixed HID4 validation
+on:
+  push:
+    branches: [xbox/bootstrap]
+    paths: [patches/xbox/0001-*, .github/workflows/xbox-hid4.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-and-apply:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: xbox/bootstrap
+      - name: Apply only hash-locked HID4 source and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p artifacts
+          python3 - <<'PY'
+          import hashlib,json,subprocess
+          from pathlib import Path
+          records=json.loads(Path('patches/xbox/0001-hashes.json').read_text())
+          allowed={'runtime/xbox/src/mgx_exec.c','runtime/xbox/include/mgx_exec.h','runtime/xbox/startup-probe/main.c','runtime/xbox/tests/run_exec_tests.py','runtime/xbox/tests/test_hid4.c','runtime/xbox/docs/hid4-profile.md','.github/workflows/xbox-runtime.yml'}
+          assert set(records)==allowed
+          def sha(p):
+              f=Path(p)
+              return hashlib.sha256(f.read_bytes()).hexdigest() if f.is_file() else None
+          if not all(sha(p)==v['after'] for p,v in records.items()):
+              assert all(sha(p)==v['before'] for p,v in records.items()), 'unexpected source; refusing overwrite'
+              subprocess.run(['git','apply','--check','patches/xbox/0001-hid4.patch'],check=True)
+              subprocess.run(['git','apply','patches/xbox/0001-hid4.patch'],check=True)
+          assert all(sha(p)==v['after'] for p,v in records.items())
+          PY
+      - name: Install diagnostic tools
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm qemu-user
+      - uses: actions/checkout@v4
+        with:
+          repository: GTTeancum/DolRecompX
+          ref: f228472adc3da3ef3123dbb72acc91b53fd020ab
+          path: compiler
+          persist-credentials: false
+      - name: Validate runtime and math without game data
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 runtime/xbox/tests/test_loader.py -v 2>&1 | tee artifacts/loader-tests.log
+          python3 runtime/xbox/tests/run_exec_tests.py --compiler-source compiler --sanitize --output artifacts/exec-tests.json 2>&1 | tee artifacts/exec-tests.log
+          python3 runtime/xbox/tests/test_trace_bridge.py -v 2>&1 | tee artifacts/trace-tests.log
+          python3 runtime/xbox/tests/test_host_builder.py -v 2>&1 | tee artifacts/cache-tests.log
+          python3 runtime/xbox/tests/test_math.py --vectors artifacts/fma-vectors.bin --output artifacts/math-validation.json 2>&1 | tee artifacts/math-tests.log
+          python3 runtime/xbox/tests/run_math_i386.py --vectors artifacts/fma-vectors.bin --output artifacts/i386 --qemu 2>&1 | tee artifacts/math-i386.log
+      - uses: actions/checkout@v4
+        with:
+          repository: XboxDev/nxdk
+          ref: 14d5ee97e73347c973f1f57b68b79ec08c9e77f2
+          path: sdk/nxdk
+          submodules: recursive
+          persist-credentials: false
+      - name: Build generic Xbox diagnostics and compile new ABI consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NXDK_DIR="$PWD/sdk/nxdk"
+          export PATH="$NXDK_DIR/bin:$PATH"
+          make -C runtime/xbox/loader-probe -j2 2>&1 | tee artifacts/loader-xbe-build.log
+          make -C runtime/xbox/math-probe -j2 2>&1 | tee artifacts/math-xbe-build.log
+          nxdk-cc -std=gnu11 -O1 -fno-fast-math -ffp-contract=off -frounding-math -Icompiler/src -Iruntime/xbox/include -c runtime/xbox/src/mgx_exec.c -o artifacts/mgx_exec-xbox.obj
+          nxdk-cc -std=gnu11 -O1 -fno-fast-math -ffp-contract=off -frounding-math -Icompiler/src -Iruntime/xbox/include -include runtime/xbox/include/mgx_math_redirect.h -c compiler/src/cpu/cpu.c -o artifacts/cpu-xbox.obj
+          llvm-readobj --file-headers artifacts/mgx_exec-xbox.obj artifacts/cpu-xbox.obj > artifacts/abi-coff-headers.txt
+          grep -q IMAGE_FILE_MACHINE_I386 artifacts/abi-coff-headers.txt
+          cp runtime/xbox/loader-probe/bin/default.xbe artifacts/ModernGekkoX-loader-probe.xbe
+          cp runtime/xbox/math-probe/bin/default.xbe artifacts/ModernGekkoX-math-probe.xbe
+      - name: Commit tested paths without forcing
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add runtime/xbox/src/mgx_exec.c runtime/xbox/include/mgx_exec.h runtime/xbox/startup-probe/main.c runtime/xbox/tests/run_exec_tests.py runtime/xbox/tests/test_hid4.c runtime/xbox/docs/hid4-profile.md .github/workflows/xbox-runtime.yml
+          if ! git diff --cached --quiet; then
+            test "$(git ls-remote origin refs/heads/xbox/bootstrap | cut -f1)" = "$GITHUB_SHA"
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat: validate fixed Wii HID4 configuration and preserve code-write stops'
+            git push origin HEAD:refs/heads/xbox/bootstrap
+          fi
+      - name: Export tested source and evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > artifacts/REVISION.txt
+          git -C compiler rev-parse HEAD > artifacts/COMPILER-REVISION.txt
+          git -C sdk/nxdk rev-parse HEAD > artifacts/NXDK-REVISION.txt
+          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B006-source.tar.gz
+          sha256sum artifacts/*.xbe artifacts/*.tar.gz > artifacts/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ModernGekkoX-B006-validation
+          path: artifacts/
+          retention-days: 14

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Compile/run synthetic execution-bridge tests, without generated game data."""
-import argparse,json,re,subprocess,tempfile
+import argparse,json,re,subprocess,tempfile,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 def main():
@@ -17,7 +17,7 @@ def main():
    o=temp/(f.stem+'.o');cmd=common.copy()
    if f==src/'cpu/cpu.c':cmd+=['-include',str(ROOT/'include/mgx_math_redirect.h')]
    run(cmd+['-c',str(f),'-o',str(o)]);objects.append(str(o))
-  for name in ['exec','boot_profile','pmu','hid4','code_writes']:
+  for name in ['exec','boot_profile','pmu','hid4','code_writes','template']:
    obj=temp/(name+'.o');exe=temp/(name+'-tests')
    run(common+['-c',str(ROOT/'tests'/('test_'+name+'.c')),'-o',str(obj)])
    run(common+objects+[str(obj),'-lm','-o',str(exe)])
@@ -26,6 +26,7 @@ def main():
    match=re.fullmatch(r'PASS: (\d+) .* cases; (\d+) checks\n',result.stdout)
    if not match:raise ValueError('missing test summary: '+name)
    cases+=int(match[1]);checks+=int(match[2]);outputs.append(result.stdout);print(result.stdout,end='')
+  run([sys.executable,str(ROOT/'tests/test_template_tool.py'),'--compiler-source',str(a.compiler_source.resolve()),'-v'])
   if a.output:
    a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':cases,'checks':checks,'sanitizers':a.sanitize,'output':''.join(outputs),'commands':commands,'game_data_used':False},indent=2)+'\n')
 if __name__=='__main__':main()

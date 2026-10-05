@@ -13,6 +13,11 @@
 #else
 #define PRINT printf
 #endif
+#ifdef MGX_TEMPLATE_PROFILE_HEADER
+#include MGX_TEMPLATE_PROFILE_HEADER
+#else
+#define MGX_TEMPLATE_PROFILE NULL
+#endif
 extern int mgx_generated_dispatch(CPUState *,uint32_t);
 static bool read_at(void *u,uint64_t at,void *out,uint32_t n){
     FILE *f=u;return at<=LONG_MAX&&!fseek(f,(long)at,SEEK_SET)&&fread(out,1,n,f)==n;
@@ -45,7 +50,7 @@ int main(int argc,char **argv){
     if(strict_requested)profile=MGX_BOOT_STRICT;
 #endif
     /* CPU preset only; apploader, low-memory handoff and devices unimplemented. */
-    mgx_math_init();mgx_exec_run_profile(run,cpu,&memory,&plan,mgx_generated_dispatch,10000,profile);
+    mgx_math_init();mgx_exec_run_template(run,cpu,&memory,&plan,mgx_generated_dispatch,10000,profile,profile==MGX_BOOT_WII_CPU?MGX_TEMPLATE_PROFILE:NULL);
     PRINT("{\"diagnostic\":\"bounded-generated-startup\",\"bootstrap\":\"%s\",\"entry\":\"0x%08lx\",\"stop\":\"%s\",\"pc\":\"0x%08lx\",\"address\":\"0x%08lx\",\"raw\":\"0x%08lx\",\"dispatches\":%lu,\"exception\":%lu,\"gpr1\":\"0x%08lx\",\"lr\":\"0x%08lx\",\"game_booted\":false,\"trace\":[",
           profile==MGX_BOOT_WII_CPU?"dolphin-wii-cpu-only":"zero-state-plus-DOL",(unsigned long)plan.entry,run->stop.reason,(unsigned long)run->stop.pc,(unsigned long)run->stop.address,(unsigned long)run->stop.raw,(unsigned long)run->stop.dispatches,(unsigned long)cpu->exception,(unsigned long)cpu->gpr[1],(unsigned long)cpu->lr);
     for(uint32_t i=0;i<run->stop.trace_count;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)run->stop.trace[i]);
@@ -69,6 +74,7 @@ int main(int argc,char **argv){
           (unsigned long)run->identical_code_writes,(unsigned long)run->last_identical_pc,
           (unsigned long)run->last_identical_address,(unsigned long)run->stop.width,
           (unsigned long)(uint32_t)(run->stop.value>>32),(unsigned long)(uint32_t)run->stop.value);
+    PRINT(",\"template_writes\":%lu,\"template_instruction_reads\":%lu",(unsigned long)run->template_writes,(unsigned long)run->template_instruction_reads);
     PRINT(",\"gpr\":[");
     for(unsigned i=0;i<32;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)cpu->gpr[i]);
     const uint8_t *before=mgx_memory_pointer(&memory,run->stop.address,4);

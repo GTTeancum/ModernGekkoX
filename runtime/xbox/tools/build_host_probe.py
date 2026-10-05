@@ -68,6 +68,7 @@ def main():
     parser.add_argument("--compiler-source", type=Path, required=True)
     parser.add_argument("--generated", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--template-profile", type=Path, help="Private instrumented template header")
     parser.add_argument("--cc", default="clang")
     parser.add_argument("--optimization", choices=["0", "1", "2", "s", "z"], default="0")
     parser.add_argument("--jobs", type=int, default=2)
@@ -106,6 +107,8 @@ def main():
             command += ["-include", str(runtime/"include/mgx_math_redirect.h")]
         if f == runtime/"startup-probe/bridge.c":
             command += ['-DMGX_GENERATED_HEADER="'+module+'.h"']
+        if f == runtime/"startup-probe/main.c" and a.template_profile:
+            command += ['-DMGX_TEMPLATE_PROFILE_HEADER="'+str(a.template_profile.resolve())+'"']
         return compile_cached(f, output/(f"{index:04d}-"+f.stem+".o"), command, identity, output)
     start = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as pool:

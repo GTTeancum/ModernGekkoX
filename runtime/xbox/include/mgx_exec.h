@@ -17,6 +17,17 @@ typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU } mgx_boot_profile;
 #define MGX_HID0_ICFI 0x00000800u
 #define MGX_HID0_DCFI 0x00000400u
 #define MGX_HID4_WII_PRESET 0x83900000u
+/* Opt-in parametric AOT template: one addi rD,0,imm word only. The producer
+   must replace that instruction at its internal generated label, not merely
+   intercept external dispatch. token is defined by the instrumented chunk;
+   its unresolved symbol prevents linking the profile with the original chunk.
+   Copied vectors are not registered for execution by this API. */
+typedef struct {
+    uint32_t address,size,patch_offset,max_immediate;
+    const uint8_t *original;
+    uint32_t writer_pc[2],writer_word[2];
+    const uint32_t *instrumentation_token;
+} mgx_code_template;
 typedef int (*mgx_dispatch)(CPUState *,uint32_t);
 typedef struct {
     const char *reason;
@@ -37,6 +48,8 @@ typedef struct {
     uint32_t pmu_control[2], pmu_counter[4];
     uint32_t pmu_reads, pmu_control_writes, pmu_counter_writes;
     uint32_t identical_code_writes,last_identical_pc,last_identical_address;
+    const mgx_code_template *code_template;
+    uint32_t template_writes,template_instruction_reads;
     jmp_buf escape;
 } mgx_execution;
 void mgx_exec_run(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,
@@ -44,4 +57,9 @@ void mgx_exec_run(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,
 void mgx_exec_run_profile(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,
                           const mgx_dol_plan *plan,mgx_dispatch dispatch,
                           uint32_t limit,mgx_boot_profile profile);
+void mgx_exec_run_template(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,
+                          const mgx_dol_plan *plan,mgx_dispatch dispatch,
+                          uint32_t limit,mgx_boot_profile profile,
+                          const mgx_code_template *code_template);
+uint32_t mgx_exec_template_li(CPUState *cpu,uint32_t cia);
 #endif

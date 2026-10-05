@@ -21,9 +21,16 @@ int main(int argc,char **argv){
 #ifdef NXDK
     (void)argc;(void)argv;const char *path="D:\\main.dol";XVideoSetMode(640,480,32,REFRESH_DEFAULT);
 #else
-    if(argc<2||argc>3){fprintf(stderr,"usage: startup-probe main.dol [--strict]\n");return 2;}
-    if(argc==3&&strcmp(argv[2],"--strict")){fprintf(stderr,"unknown startup option\n");return 2;}
-    const char *path=argv[1];
+    if(argc<2){fprintf(stderr,"usage: startup-probe main.dol [--strict] [--dump-mem1 path]\n");return 2;}
+    const char *path=argv[1],*dump_path=NULL;int strict_requested=0;
+    for(int i=2;i<argc;++i){
+        if(!strcmp(argv[i],"--strict")&&!strict_requested)strict_requested=1;
+        else if(!strcmp(argv[i],"--dump-mem1")&&!dump_path&&i+1<argc)dump_path=argv[++i];
+        else {fprintf(stderr,"unknown or incomplete startup option\n");return 2;}
+    }
+    /* Never overwrite the input DOL with a diagnostic snapshot. Canonical
+       path/alias checking is handled by the private invoking tool as well. */
+    if(dump_path&&!strcmp(path,dump_path)){fprintf(stderr,"dump path equals input\n");return 2;}
 #endif
     FILE *f=fopen(path,"rb");if(!f)return 3;
     if(fseek(f,0,SEEK_END)||ftell(f)<0){fclose(f);return 4;}
@@ -35,7 +42,7 @@ int main(int argc,char **argv){
     if(loaded!=MGX_OK){PRINT("loader rejected input: %s\n",mgx_status_string(loaded));cpu_free(cpu);free(cpu);free(run);return 6;}
     mgx_boot_profile profile=MGX_BOOT_WII_CPU;
 #ifndef NXDK
-    if(argc==3)profile=MGX_BOOT_STRICT;
+    if(strict_requested)profile=MGX_BOOT_STRICT;
 #endif
     /* CPU preset only; apploader, low-memory handoff and devices unimplemented. */
     mgx_math_init();mgx_exec_run_profile(run,cpu,&memory,&plan,mgx_generated_dispatch,10000,profile);
@@ -58,14 +65,32 @@ int main(int argc,char **argv){
           (unsigned long)cpu->srr1,(unsigned long)cpu->msr,
           (unsigned long)cpu->gpr[3],(unsigned long)run->hid4,
           (unsigned long)run->hid4_reads,(unsigned long)run->hid4_writes);
+    PRINT(",\"identical_code_writes\":%lu,\"last_identical_pc\":\"0x%08lx\",\"last_identical_address\":\"0x%08lx\",\"write_width\":%lu,\"write_value64\":\"0x%08lx%08lx\"",
+          (unsigned long)run->identical_code_writes,(unsigned long)run->last_identical_pc,
+          (unsigned long)run->last_identical_address,(unsigned long)run->stop.width,
+          (unsigned long)(uint32_t)(run->stop.value>>32),(unsigned long)(uint32_t)run->stop.value);
     PRINT(",\"gpr\":[");
     for(unsigned i=0;i<32;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)cpu->gpr[i]);
     const uint8_t *before=mgx_memory_pointer(&memory,run->stop.address,4);
     uint32_t before_word=before?((uint32_t)before[0]<<24)|((uint32_t)before[1]<<16)|((uint32_t)before[2]<<8)|before[3]:0;
     PRINT("],\"stop_address_backed\":%s,\"stop_address_word\":\"0x%08lx\"}\n",before?"true":"false",(unsigned long)before_word);
+    int result_code=0;
+#ifndef NXDK
+    if(dump_path){
+        /* Exclusive creation: aliases/symlinks/existing input or evidence files
+           cannot be truncated. The invoking tool selects a fresh output. */
+        FILE *out=fopen(dump_path,"wbx");
+        if(!out){fprintf(stderr,"cannot create MEM1 snapshot\n");result_code=7;}
+        else {
+            int ok=fwrite(memory.mem1,1,memory.mem1_size,out)==memory.mem1_size;
+            if(fclose(out))ok=0;
+            if(!ok){remove(dump_path);fprintf(stderr,"MEM1 snapshot write failed\n");result_code=7;}
+        }
+    }
+#endif
     cpu_free(cpu);free(cpu);free(run);
 #ifdef NXDK
     for(;;)Sleep(1000);
 #endif
-    return 0;
+    return result_code;
 }

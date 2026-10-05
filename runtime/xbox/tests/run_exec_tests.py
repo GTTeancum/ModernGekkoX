@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Compile/run synthetic execution-bridge tests, without generated game data."""
-import argparse,json,subprocess,tempfile
+import argparse,json,re,subprocess,tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 def main():
@@ -10,22 +10,22 @@ def main():
  with tempfile.TemporaryDirectory() as d:
   temp=Path(d);common=['clang','-std=c11','-O1','-g','-fno-fast-math','-ffp-contract=off','-frounding-math','-I'+str(src),'-I'+str(ROOT/'include')]
   if a.sanitize:common+=['-fsanitize=address,undefined','-fno-sanitize-recover=all']
-  objects=[];commands=[]
-  for f in [src/'cpu/cpu.c',ROOT/'src/mgx_dol.c',ROOT/'src/mgx_exec.c',ROOT/'src/mgx_math.c',ROOT/'tests/test_exec.c']:
+  objects=[];commands=[];outputs=[];cases=checks=0
+  def run(cmd):
+   commands.append(cmd);subprocess.run(cmd,check=True,timeout=120)
+  for f in [src/'cpu/cpu.c',ROOT/'src/mgx_dol.c',ROOT/'src/mgx_exec.c',ROOT/'src/mgx_math.c']:
    o=temp/(f.stem+'.o');cmd=common.copy()
    if f==src/'cpu/cpu.c':cmd+=['-include',str(ROOT/'include/mgx_math_redirect.h')]
-   cmd+=['-c',str(f),'-o',str(o)];commands.append(cmd);subprocess.run(cmd,check=True);objects.append(str(o))
-  exe=temp/'exec-tests';cmd=common+objects+['-lm','-o',str(exe)];commands.append(cmd);subprocess.run(cmd,check=True)
-  result=subprocess.run([str(exe)],check=True,capture_output=True,text=True,timeout=15);print(result.stdout,end='')
-  boot_obj=temp/'boot.o';cmd=common+['-c',str(ROOT/'tests/test_boot_profile.c'),'-o',str(boot_obj)];commands.append(cmd);subprocess.run(cmd,check=True)
-  boot_exe=temp/'boot-tests';cmd=common+objects[:-1]+[str(boot_obj),'-lm','-o',str(boot_exe)];commands.append(cmd);subprocess.run(cmd,check=True)
-  boot=subprocess.run([str(boot_exe)],check=True,capture_output=True,text=True,timeout=15);print(boot.stdout,end='')
-  pmu_obj=temp/'pmu.o';cmd=common+['-c',str(ROOT/'tests/test_pmu.c'),'-o',str(pmu_obj)];commands.append(cmd);subprocess.run(cmd,check=True)
-  pmu_exe=temp/'pmu-tests';cmd=common+objects[:-1]+[str(pmu_obj),'-lm','-o',str(pmu_exe)];commands.append(cmd);subprocess.run(cmd,check=True)
-  pmu=subprocess.run([str(pmu_exe)],check=True,capture_output=True,text=True,timeout=15);print(pmu.stdout,end='')
-  hid4_obj=temp/'hid4.o';cmd=common+['-c',str(ROOT/'tests/test_hid4.c'),'-o',str(hid4_obj)];commands.append(cmd);subprocess.run(cmd,check=True)
-  hid4_exe=temp/'hid4-tests';cmd=common+objects[:-1]+[str(hid4_obj),'-lm','-o',str(hid4_exe)];commands.append(cmd);subprocess.run(cmd,check=True)
-  hid4=subprocess.run([str(hid4_exe)],check=True,capture_output=True,text=True,timeout=15);print(hid4.stdout,end='')
+   run(cmd+['-c',str(f),'-o',str(o)]);objects.append(str(o))
+  for name in ['exec','boot_profile','pmu','hid4','code_writes']:
+   obj=temp/(name+'.o');exe=temp/(name+'-tests')
+   run(common+['-c',str(ROOT/'tests'/('test_'+name+'.c')),'-o',str(obj)])
+   run(common+objects+[str(obj),'-lm','-o',str(exe)])
+   result=subprocess.run([str(exe)],capture_output=True,text=True,timeout=15)
+   if result.returncode:raise RuntimeError(result.stdout+result.stderr)
+   match=re.fullmatch(r'PASS: (\d+) .* cases; (\d+) checks\n',result.stdout)
+   if not match:raise ValueError('missing test summary: '+name)
+   cases+=int(match[1]);checks+=int(match[2]);outputs.append(result.stdout);print(result.stdout,end='')
   if a.output:
-   a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':105,'sanitizers':a.sanitize,'output':result.stdout+boot.stdout+pmu.stdout+hid4.stdout,'commands':commands,'game_data_used':False},indent=2)+'\n')
+   a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':cases,'checks':checks,'sanitizers':a.sanitize,'output':''.join(outputs),'commands':commands,'game_data_used':False},indent=2)+'\n')
 if __name__=='__main__':main()

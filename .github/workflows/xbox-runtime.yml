@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: GTTeancum/DolRecompX
-          ref: f228472adc3da3ef3123dbb72acc91b53fd020ab
+          ref: d3248c476c06c45487cc5d0e1d898056415c7816
           path: compiler
           persist-credentials: false
       - name: Validate fail-closed execution and CPU/cache/PMU/HID4 profile (synthetic only)
@@ -40,6 +40,7 @@ jobs:
           python3 runtime/xbox/tests/run_exec_tests.py --compiler-source compiler --sanitize --output artifacts/exec-tests.json 2>&1 | tee artifacts/exec-tests.log
           python3 runtime/xbox/tests/test_trace_bridge.py -v 2>&1 | tee artifacts/trace-bridge-tests.log
           python3 runtime/xbox/tests/test_host_builder.py -v 2>&1 | tee artifacts/host-builder-tests.log
+          python3 runtime/xbox/tests/test_probe_cli.py --compiler-source compiler -v 2>&1 | tee artifacts/probe-cli-tests.log
       - uses: actions/checkout@v4
         with:
           repository: XboxDev/nxdk
@@ -56,7 +57,8 @@ jobs:
           make -C runtime/xbox/loader-probe -j2 2>&1 | tee artifacts/loader-xbe-build.log
           make -C runtime/xbox/math-probe -j2 2>&1 | tee artifacts/math-xbe-build.log
           nxdk-cc -std=gnu11 -O1 -fno-fast-math -ffp-contract=off -frounding-math -Icompiler/src -Iruntime/xbox/include -c runtime/xbox/src/mgx_exec.c -o artifacts/mgx_exec-xbox.obj
-          llvm-readobj --file-headers artifacts/mgx_exec-xbox.obj > artifacts/exec-coff-headers.txt
+          nxdk-cc -std=gnu11 -O1 -fno-fast-math -ffp-contract=off -frounding-math -Icompiler/src -Iruntime/xbox/include -include runtime/xbox/include/mgx_math_redirect.h -c compiler/src/cpu/cpu.c -o artifacts/cpu-xbox.obj
+          llvm-readobj --file-headers artifacts/mgx_exec-xbox.obj artifacts/cpu-xbox.obj > artifacts/exec-coff-headers.txt
           grep -q IMAGE_FILE_MACHINE_I386 artifacts/exec-coff-headers.txt
           cp runtime/xbox/loader-probe/bin/default.xbe artifacts/ModernGekkoX-loader-probe.xbe
           cp runtime/xbox/math-probe/bin/default.xbe artifacts/ModernGekkoX-math-probe.xbe
@@ -70,14 +72,14 @@ jobs:
           git rev-parse HEAD > artifacts/REVISION.txt
           git -C compiler rev-parse HEAD > artifacts/COMPILER-REVISION.txt
           git -C sdk/nxdk rev-parse HEAD > artifacts/NXDK-REVISION.txt
-          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B006-source.tar.gz
+          git archive --format=tar HEAD | gzip > artifacts/ModernGekkoX-B007-source.tar.gz
           find sdk/nxdk/lib -name '*.lib' -type f > artifacts/sdk-link-files.txt
           printf '%s\n' sdk/nxdk/tools/cxbe/cxbe >> artifacts/sdk-link-files.txt
-          tar -czf artifacts/nxdk-B006-link-support.tar.gz -T artifacts/sdk-link-files.txt
+          tar -czf artifacts/nxdk-B007-link-support.tar.gz -T artifacts/sdk-link-files.txt
           sha256sum artifacts/*.xbe artifacts/*.tar.gz > artifacts/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ModernGekkoX-B006-validation
+          name: ModernGekkoX-B007-validation
           path: artifacts/
           retention-days: 14

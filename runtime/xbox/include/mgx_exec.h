@@ -36,6 +36,7 @@ typedef struct {
     /* MMCR0/MMCR1 and PMC1..4. Only event-disabled control is supported. */
     uint32_t pmu_control[2], pmu_counter[4];
     uint32_t pmu_reads, pmu_control_writes, pmu_counter_writes;
+    uint32_t identical_code_writes,last_identical_pc,last_identical_address;
     jmp_buf escape;
 } mgx_execution;
 void mgx_exec_run(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,

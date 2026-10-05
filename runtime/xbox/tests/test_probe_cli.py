@@ -27,6 +27,16 @@ class ProbeCLI(unittest.TestCase):
  def test_strict_and_snapshot(self):
   f=self.root/'strict.bin';r=self.invoke('--strict','--dump-mem1',f);self.assertEqual(r.returncode,0,r.stderr)
   self.assertEqual(json.loads(r.stdout)['bootstrap'],'zero-state-plus-DOL');self.assertTrue(f.is_file())
+ def test_irq_profile_default(self):
+  r=self.invoke();self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
+  self.assertEqual(d['bootstrap'],'reference-wii-irq-init');self.assertEqual(d['pi_cause'],'0x00010100');self.assertEqual(d['mmio_events'],[])
+ def test_cpu_only_profile(self):
+  r=self.invoke('--cpu-only');self.assertEqual(r.returncode,0,r.stderr)
+  self.assertEqual(json.loads(r.stdout)['bootstrap'],'dolphin-wii-cpu-only')
+ def test_conflicting_profiles(self):
+  self.assertEqual(self.invoke('--strict','--cpu-only').returncode,2)
+  self.assertEqual(self.invoke('--cpu-only','--strict').returncode,2)
+ def test_duplicate_cpu_only(self):self.assertEqual(self.invoke('--cpu-only','--cpu-only').returncode,2)
  def test_missing_argument(self):self.assertEqual(self.invoke('--dump-mem1').returncode,2)
  def test_duplicate_flag(self):self.assertEqual(self.invoke('--strict','--strict').returncode,2)
  def test_existing_file_unchanged(self):

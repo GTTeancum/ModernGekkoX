@@ -8,6 +8,9 @@ static void stop(mgx_execution *r,const char *why,uint32_t address,uint64_t valu
     longjmp(r->escape,1);
 }
 static mgx_execution *run_for(CPUState *cpu){return (mgx_execution *)cpu->external_user_data;}
+static int wii_profile(mgx_boot_profile p){
+    return p==MGX_BOOT_WII_CPU || p==MGX_BOOT_WII_IRQ;
+}
 static uint32_t word_be(const uint8_t *p){
     return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
 }
@@ -51,7 +54,7 @@ static int template_bytes_valid(mgx_execution *r){
 uint32_t mgx_exec_template_li(CPUState *cpu,uint32_t cia){
     mgx_execution *r=run_for(cpu);cpu->pc=cia;
     const mgx_code_template *t=r->code_template;
-    if(!t || r->profile!=MGX_BOOT_WII_CPU || cia!=t->address+t->patch_offset)
+    if(!t || !wii_profile(r->profile) || cia!=t->address+t->patch_offset)
         stop(r,"unregistered-template-instruction",cia,0,4,0);
     if(!template_bytes_valid(r))stop(r,"invalid-template-instruction",cia,0,4,0);
     const uint8_t *p=mgx_memory_pointer(&r->memory,cia,4);
@@ -61,7 +64,7 @@ uint32_t mgx_exec_template_li(CPUState *cpu,uint32_t cia){
 }
 static int template_store(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
     const mgx_code_template *t=r->code_template;
-    if(!t || r->profile!=MGX_BOOT_WII_CPU || width!=4 ||
+    if(!t || !wii_profile(r->profile) || width!=4 ||
        address!=t->address+t->patch_offset)return 0;
     if(r->cpu->pc!=t->writer_pc[0] && r->cpu->pc!=t->writer_pc[1])return 0;
     const uint32_t opcode=word_be(t->original+t->patch_offset);
@@ -89,7 +92,7 @@ static void check_write(CPUState *cpu,uint32_t address,uint64_t value,uint8_t wi
            (uint64_t)s->bank_offset+s->size<=offset)continue;
         uint8_t bytes[8];
         for(unsigned j=0;j<width;++j)bytes[width-j-1]=(uint8_t)(value>>(j*8));
-        if(r->profile!=MGX_BOOT_WII_CPU || memcmp(before,bytes,width)){
+        if(!wii_profile(r->profile) || memcmp(before,bytes,width)){
             if(template_store(r,offset|GC_RAM_BASE,value,width))return;
             stop(r,"write-to-translated-code",offset|GC_RAM_BASE,value,width,0);
         }
@@ -98,14 +101,100 @@ static void check_write(CPUState *cpu,uint32_t address,uint64_t value,uint8_t wi
         return;
     }
 }
+/* Bounded reference IRQ setup, deliberately separate from WII_CPU.
+   Device execution, delivery of IRQs, IOS transactions, DMA and MI protection
+   remain unsupported. See docs/boot-interrupt-registers.md. */
+static uint32_t irq_physical(uint32_t a){
+    if((a>=0xcc003000u && a<0xcc003008u) ||
+       (a>=0xcd000030u && a<0xcd000038u) ||
+       (a>=0xcc00401cu && a<0xcc00401eu))return a-0xc0000000u;
+    return a;
+}
+static int irq_address(uint32_t a){
+    return (a>=0x0c003000u && a<0x0c003008u) ||
+           (a>=0x0d000030u && a<0x0d000038u) ||
+           (a>=0x0c00401cu && a<0x0c00401eu);
+}
+static void irq_record(mgx_execution *r,uint32_t address,uint32_t value,
+                       uint8_t width,int write){
+    mgx_boot_irq *q=&r->irq;
+    /* Prechecked before any accepted access or register mutation. */
+    q->events[q->event_count++]=(mgx_mmio_event){r->cpu->pc,address,value,width,(uint32_t)write};
+    if(write)++q->writes;else ++q->reads;
+}
+static void irq_check_capacity(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
+    if(r->irq.event_count>=MGX_MMIO_TRACE_CAPACITY)
+        stop(r,"mmio-trace-capacity",address,value,width,0);
+}
+static int irq_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *out){
+    if(r->profile!=MGX_BOOT_WII_IRQ)return 0;
+    const uint32_t a=irq_physical(address);if(!irq_address(a))return 0;
+    uint32_t value;
+    if(a>=0x0c003000u && a<0x0c003008u){
+        if(!((width==4 && !(a&3u)) || (width==2 && !(a&1u))))
+            stop(r,"unsupported-mmio-width",address,0,width,0);
+        value=(a&4u)?r->irq.pi_mask:r->irq.pi_cause;
+        if(width==2)value=(a&2u)?value&0xffffu:value>>16;
+    }else if(a==0x0c00401cu){
+        if(width!=2)stop(r,"unsupported-mmio-width",address,0,width,0);
+        value=r->irq.mi_mask;
+    }else{
+        /* The inspected IPC implementation does not provide these reads. */
+        stop(r,"unsupported-irq-register-read",address,0,width,0);return 0;
+    }
+    irq_check_capacity(r,address,0,width);irq_record(r,address,value,width,0);
+    *out=value;return 1;
+}
+static int irq_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
+    if(r->profile!=MGX_BOOT_WII_IRQ)return 0;
+    const uint32_t a=irq_physical(address);if(!irq_address(a))return 0;
+    mgx_boot_irq *q=&r->irq;
+    /* Reject unsupported operations before mutation. Pending PI interrupt is
+       different: a valid committed mask write is reported, then execution
+       stops before any handler is invented, even when MSR.EE is clear. */
+    uint32_t *destination=NULL,v=(uint32_t)value;
+    if(a==0x0c003000u || a==0x0c003004u){
+        if(width!=4)stop(r,"unsupported-mmio-width",address,value,width,0);
+        if(value&~UINT64_C(0x7fff))
+            stop(r,"unsupported-pi-irq-bits",address,value,width,0);
+        destination=(a&4u)?&q->pi_mask:&q->pi_cause;
+        if(!(a&4u))v=q->pi_cause&~v; /* W1C; reset-button state cannot be cleared. */
+    }else if(a==0x0d000030u || a==0x0d000034u){
+        if(width!=4)stop(r,"unsupported-mmio-width",address,value,width,0);
+        /* Only the idle initial Broadway IPC configuration. A live reset,
+           enabling another device or disabling IPC requires more modeling. */
+        if(q->ppc_flags || q->ppc_mask!=0x40000000u ||
+           (a==0x0d000034u ? value!=UINT64_C(0x40000000) : (value&~UINT64_C(0x40000000))!=0))
+            stop(r,"unsupported-ipc-irq-transition",address,value,width,0);
+        destination=(a&4u)?&q->ppc_mask:&q->ppc_flags;
+        if(!(a&4u))v=q->ppc_flags&~v;
+    }else if(a==0x0c00401cu){
+        if(width!=2)stop(r,"unsupported-mmio-width",address,value,width,0);
+        if(value || q->mi_mask)
+            stop(r,"unsupported-mi-irq-enable",address,value,width,0);
+        destination=&q->mi_mask;
+    }else{
+        stop(r,"unsupported-irq-register-write",address,value,width,0);return 0;
+    }
+    irq_check_capacity(r,address,value,width);
+    *destination=v;
+    q->pi_pending=q->pi_cause&q->pi_mask&0x7fffu;
+    irq_record(r,address,(uint32_t)value,width,1);
+    if(q->pi_pending)stop(r,"unsupported-pending-pi-interrupt",address,value,width,0);
+    return 1;
+}
 static uint64_t read_external(CPUState *cpu,uint32_t address,uint8_t width){
     mgx_execution *r=run_for(cpu);
     const uint8_t *p=mgx_memory_pointer(&r->memory,address,width);
-    if(!p)stop(r,"unimplemented-memory-read",address,0,width,0);
+    if(!p){
+        uint64_t value=0;if(irq_read(r,address,width,&value))return value;
+        stop(r,"unimplemented-memory-read",address,0,width,0);
+    }
     uint64_t v=0;for(unsigned i=0;i<width;++i)v=(v<<8)|p[i];return v;
 }
 static void write_external(CPUState *cpu,uint32_t address,uint64_t value,uint8_t width){
     mgx_execution *r=run_for(cpu);
+    if(!mgx_memory_pointer(&r->memory,address,width) && irq_write(r,address,value,width))return;
     check_write(cpu,address,value,width,r);
     uint8_t *p=mgx_memory_pointer(&r->memory,address,width);
     ppc_clear_reservation_for_store(cpu,address,width);
@@ -121,10 +210,10 @@ static int pmu_counter_index(uint16_t spr){
 }
 static uint32_t read_special(CPUState *cpu,uint16_t spr,uint32_t cia){
     mgx_execution *r=run_for(cpu);cpu->pc=cia;
-    if(r->profile==MGX_BOOT_WII_CPU && spr==1008){++r->hid0_reads;return r->hid0;}
-    if(r->profile==MGX_BOOT_WII_CPU && spr==1011){++r->hid4_reads;return r->hid4;}
-    if(r->profile==MGX_BOOT_WII_CPU && spr==1017){++r->l2_reads;return r->l2cr;}
-    if(r->profile==MGX_BOOT_WII_CPU){
+    if(wii_profile(r->profile) && spr==1008){++r->hid0_reads;return r->hid0;}
+    if(wii_profile(r->profile) && spr==1011){++r->hid4_reads;return r->hid4;}
+    if(wii_profile(r->profile) && spr==1017){++r->l2_reads;return r->l2cr;}
+    if(wii_profile(r->profile)){
         if(spr==952 || spr==956){++r->pmu_reads;return r->pmu_control[spr==956];}
         const int index=pmu_counter_index(spr);
         if(index>=0){++r->pmu_reads;return r->pmu_counter[index];}
@@ -133,7 +222,7 @@ static uint32_t read_special(CPUState *cpu,uint16_t spr,uint32_t cia){
 }
 static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia){
     mgx_execution *r=run_for(cpu);cpu->pc=cia;
-    if(r->profile==MGX_BOOT_WII_CPU && spr==1011){
+    if(wii_profile(r->profile) && spr==1011){
         /* Fixed direct-map CPU profile only. SBE/ST0 and every other bit must
            retain the documented preset. No BAT/page-table/cache transition
            can silently pass through our address helpers. This same-value
@@ -142,7 +231,7 @@ static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia
             stop(r,"unsupported-hid4-transition",spr,value,4,0);
         ppc_memory_fence();++r->hid4_writes;return;
     }
-    if(r->profile==MGX_BOOT_WII_CPU && spr==1008){
+    if(wii_profile(r->profile) && spr==1008){
         /* Only the ordinary cache-enable bits and I-cache invalidate request
            may change. DCFI is deliberately not self-cleared (Dolphin/Gekko
            reference), and changes to it fail: dirty-line loss is unmodelled. */
@@ -154,7 +243,7 @@ static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia
         r->hid0=value&~MGX_HID0_ICFI;++r->hid0_writes;
         return;
     }
-    if(r->profile==MGX_BOOT_WII_CPU && spr==1017){
+    if(wii_profile(r->profile) && spr==1017){
         const uint32_t enable=0x80000000u,invalidate=0x00200000u;
         /* This CPU-only profile starts with an empty, disabled abstract L2
            (Dolphin ResetRegisters). No SRAM timing/test configuration accepted.
@@ -169,7 +258,7 @@ static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia
         }
         r->l2cr=value&~1u;++r->l2_writes;ppc_memory_fence();return;
     }
-    if(r->profile==MGX_BOOT_WII_CPU){
+    if(wii_profile(r->profile)){
         if(spr==952 || spr==956){
             /* Zero selects no counted events and disables PMU interrupts.
                Reject ANY active/freeze/trigger/reserved configuration before
@@ -197,7 +286,7 @@ static void external32_write(CPUState *cpu,uint32_t address,uint32_t value,uint8
 }
 static void cache(CPUState *cpu,uint8_t operation,uint32_t address,uint32_t cia){
     mgx_execution *r=run_for(cpu);cpu->pc=cia;
-    if(r->profile==MGX_BOOT_WII_CPU && operation<=PPC_CACHE_ICBI){
+    if(wii_profile(r->profile) && operation<=PPC_CACHE_ICBI){
         const uint32_t line=address&~31u;
         if(operation==PPC_CACHE_DCBI){
             /* Only already-invalid locked-cache lines are supported. This
@@ -225,19 +314,24 @@ void mgx_exec_run_template(mgx_execution *r,CPUState *cpu,const mgx_memory *memo
                   mgx_boot_profile profile,const mgx_code_template *code_template){
     if(!r)return;
     memset(r,0,sizeof(*r));r->stop.reason="invalid-execution-arguments";
-    if((profile!=MGX_BOOT_STRICT&&profile!=MGX_BOOT_WII_CPU)||!cpu||!memory||!plan||!dispatch||!limit||plan->count>18||cpu->ram!=memory->mem1||
+    if((profile!=MGX_BOOT_STRICT&&!wii_profile(profile))||!cpu||!memory||!plan||!dispatch||!limit||plan->count>18||cpu->ram!=memory->mem1||
        cpu->ram_size!=memory->mem1_size||cpu->mem2!=memory->mem2||cpu->mem2_size!=memory->mem2_size)return;
     for(uint32_t i=0;i<plan->count;++i)
         if(plan->sections[i].executable&&plan->sections[i].bank!=0)return;
-    if(code_template && (profile!=MGX_BOOT_WII_CPU || !valid_template(code_template,memory,plan))){
+    if(code_template && (!wii_profile(profile) || !valid_template(code_template,memory,plan))){
         r->stop.reason="invalid-template-profile";return;
     }
     r->cpu=cpu;r->memory=*memory;r->plan=plan;r->profile=profile;r->code_template=code_template;
-    if(profile==MGX_BOOT_WII_CPU){
+    if(wii_profile(profile)){
         /* Dolphin CBoot::SetupMSR / SetupHID(is_wii=true). Deliberately only
            CPU register presets; low-memory handoff, BATs and IOS are absent. */
         r->hid0=0x0011c664u;cpu->msr=0x00002032u;cpu->hid2=0xe0000000u;
         cpu->runtime_cpu=PPC_RUNTIME_BROADWAY;r->hid4=MGX_HID4_WII_PRESET;
+    }
+    if(profile==MGX_BOOT_WII_IRQ){
+        /* Pinned Dolphin initial PI/IPC snapshot, not measured console state.
+           VI pending (masked) and reset button unpressed must not be erased. */
+        r->irq.pi_cause=0x00010100u;r->irq.ppc_mask=0x40000000u;
     }
     unsigned old_depth=dolrecomp_call_depth;dolrecomp_call_depth=0;
     PPCMemWriteJournal old_journal=g_mem_write_journal;void *old_user=g_mem_write_journal_user;

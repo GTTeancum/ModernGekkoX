@@ -26,10 +26,11 @@ int main(int argc,char **argv){
 #ifdef NXDK
     (void)argc;(void)argv;const char *path="D:\\main.dol";XVideoSetMode(640,480,32,REFRESH_DEFAULT);
 #else
-    if(argc<2){fprintf(stderr,"usage: startup-probe main.dol [--strict] [--dump-mem1 path]\n");return 2;}
-    const char *path=argv[1],*dump_path=NULL;int strict_requested=0;
+    if(argc<2){fprintf(stderr,"usage: startup-probe main.dol [--strict | --cpu-only] [--dump-mem1 path]\n");return 2;}
+    const char *path=argv[1],*dump_path=NULL;int strict_requested=0,cpu_only_requested=0;
     for(int i=2;i<argc;++i){
-        if(!strcmp(argv[i],"--strict")&&!strict_requested)strict_requested=1;
+        if(!strcmp(argv[i],"--strict")&&!strict_requested&&!cpu_only_requested)strict_requested=1;
+        else if(!strcmp(argv[i],"--cpu-only")&&!strict_requested&&!cpu_only_requested)cpu_only_requested=1;
         else if(!strcmp(argv[i],"--dump-mem1")&&!dump_path&&i+1<argc)dump_path=argv[++i];
         else {fprintf(stderr,"unknown or incomplete startup option\n");return 2;}
     }
@@ -45,14 +46,15 @@ int main(int argc,char **argv){
     mgx_memory memory={cpu->ram,cpu->ram_size,cpu->mem2,cpu->mem2_size};mgx_dol_plan plan;
     mgx_status loaded=mgx_dol_load(read_at,f,size,&memory,&plan);fclose(f);
     if(loaded!=MGX_OK){PRINT("loader rejected input: %s\n",mgx_status_string(loaded));cpu_free(cpu);free(cpu);free(run);return 6;}
-    mgx_boot_profile profile=MGX_BOOT_WII_CPU;
+    mgx_boot_profile profile=MGX_BOOT_WII_IRQ;
 #ifndef NXDK
     if(strict_requested)profile=MGX_BOOT_STRICT;
+    else if(cpu_only_requested)profile=MGX_BOOT_WII_CPU;
 #endif
-    /* CPU preset only; apploader, low-memory handoff and devices unimplemented. */
-    mgx_math_init();mgx_exec_run_template(run,cpu,&memory,&plan,mgx_generated_dispatch,10000,profile,profile==MGX_BOOT_WII_CPU?MGX_TEMPLATE_PROFILE:NULL);
+    /* Explicit reference preset; no authentic apploader or complete devices. */
+    mgx_math_init();mgx_exec_run_template(run,cpu,&memory,&plan,mgx_generated_dispatch,10000,profile,profile!=MGX_BOOT_STRICT?MGX_TEMPLATE_PROFILE:NULL);
     PRINT("{\"diagnostic\":\"bounded-generated-startup\",\"bootstrap\":\"%s\",\"entry\":\"0x%08lx\",\"stop\":\"%s\",\"pc\":\"0x%08lx\",\"address\":\"0x%08lx\",\"raw\":\"0x%08lx\",\"dispatches\":%lu,\"exception\":%lu,\"gpr1\":\"0x%08lx\",\"lr\":\"0x%08lx\",\"game_booted\":false,\"trace\":[",
-          profile==MGX_BOOT_WII_CPU?"dolphin-wii-cpu-only":"zero-state-plus-DOL",(unsigned long)plan.entry,run->stop.reason,(unsigned long)run->stop.pc,(unsigned long)run->stop.address,(unsigned long)run->stop.raw,(unsigned long)run->stop.dispatches,(unsigned long)cpu->exception,(unsigned long)cpu->gpr[1],(unsigned long)cpu->lr);
+          profile==MGX_BOOT_WII_IRQ?"reference-wii-irq-init":profile==MGX_BOOT_WII_CPU?"dolphin-wii-cpu-only":"zero-state-plus-DOL",(unsigned long)plan.entry,run->stop.reason,(unsigned long)run->stop.pc,(unsigned long)run->stop.address,(unsigned long)run->stop.raw,(unsigned long)run->stop.dispatches,(unsigned long)cpu->exception,(unsigned long)cpu->gpr[1],(unsigned long)cpu->lr);
     for(uint32_t i=0;i<run->stop.trace_count;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)run->stop.trace[i]);
     PRINT("],\"hid0\":\"0x%08lx\",\"hid0_reads\":%lu,\"hid0_writes\":%lu,\"icache_invalidations\":%lu,\"cache_events\":[%lu,%lu,%lu,%lu],\"locked_cache_invalidations\":%lu,\"trace_truncated\":%s,\"value\":\"0x%08lx\",\"l2cr\":\"0x%08lx\",\"l2_reads\":%lu,\"l2_writes\":%lu,\"l2_invalidations\":%lu",
           (unsigned long)run->hid0,(unsigned long)run->hid0_reads,(unsigned long)run->hid0_writes,
@@ -75,6 +77,18 @@ int main(int argc,char **argv){
           (unsigned long)run->last_identical_address,(unsigned long)run->stop.width,
           (unsigned long)(uint32_t)(run->stop.value>>32),(unsigned long)(uint32_t)run->stop.value);
     PRINT(",\"template_writes\":%lu,\"template_instruction_reads\":%lu",(unsigned long)run->template_writes,(unsigned long)run->template_instruction_reads);
+    PRINT(",\"pi_cause\":\"0x%08lx\",\"pi_mask\":\"0x%08lx\",\"pi_pending\":\"0x%08lx\",\"ppc_irq_mask\":\"0x%08lx\",\"ppc_irq_flags\":\"0x%08lx\",\"mi_irq_mask\":\"0x%08lx\",\"mmio_reads\":%lu,\"mmio_writes\":%lu,\"mmio_events\":[",
+          (unsigned long)run->irq.pi_cause,(unsigned long)run->irq.pi_mask,
+          (unsigned long)run->irq.pi_pending,(unsigned long)run->irq.ppc_mask,
+          (unsigned long)run->irq.ppc_flags,(unsigned long)run->irq.mi_mask,
+          (unsigned long)run->irq.reads,(unsigned long)run->irq.writes);
+    for(unsigned i=0;i<run->irq.event_count;++i){
+        const mgx_mmio_event *ev=&run->irq.events[i];
+        PRINT("%s{\"pc\":\"0x%08lx\",\"address\":\"0x%08lx\",\"value\":\"0x%08lx\",\"width\":%lu,\"write\":%s}",i?",":"",
+              (unsigned long)ev->pc,(unsigned long)ev->address,(unsigned long)ev->value,
+              (unsigned long)ev->width,ev->is_write?"true":"false");
+    }
+    PRINT("]");
     PRINT(",\"gpr\":[");
     for(unsigned i=0;i<32;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)cpu->gpr[i]);
     const uint8_t *before=mgx_memory_pointer(&memory,run->stop.address,4);

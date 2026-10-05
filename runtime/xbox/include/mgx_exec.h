@@ -4,13 +4,25 @@
 #include "mgx_dol.h"
 #include "cpu/cpu.h"
 #include <setjmp.h>
-/* Bounded diagnostic only: no device/kernel-service emulation or fabricated
+/* Bounded diagnostic only: no complete devices, kernel services or fabricated
    success. Discard the CPU after this one-shot run. One thread at a time. */
 /* STRICT retains the old all-unsupported stop behavior. WII_CPU is an
    explicitly partial Dolphin-derived CPU preset, not a Wii apploader replay.
    The latter uses coherent single-thread RAM, immutable translated text and
    no devices or pending DMA. Cache timings/dirty-line loss are not emulated. */
-typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU } mgx_boot_profile;
+/* WII_IRQ extends WII_CPU with an explicit reference interrupt-register
+   snapshot. It is not a complete device model or an apploader handoff. */
+typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ } mgx_boot_profile;
+#define MGX_MMIO_TRACE_CAPACITY 64u
+typedef struct {
+    uint32_t pc,address,value,width,is_write;
+} mgx_mmio_event;
+typedef struct {
+    uint32_t pi_cause,pi_mask,pi_pending;
+    uint32_t ppc_flags,ppc_mask,mi_mask;
+    uint32_t reads,writes,event_count;
+    mgx_mmio_event events[MGX_MMIO_TRACE_CAPACITY];
+} mgx_boot_irq;
 #define MGX_TRACE_CAPACITY 4096u
 #define MGX_HID0_ICE  0x00008000u
 #define MGX_HID0_DCE  0x00004000u
@@ -50,6 +62,7 @@ typedef struct {
     uint32_t identical_code_writes,last_identical_pc,last_identical_address;
     const mgx_code_template *code_template;
     uint32_t template_writes,template_instruction_reads;
+    mgx_boot_irq irq;
     jmp_buf escape;
 } mgx_execution;
 void mgx_exec_run(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,

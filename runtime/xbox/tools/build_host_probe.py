@@ -68,6 +68,7 @@ def main():
     parser.add_argument("--compiler-source", type=Path, required=True)
     parser.add_argument("--generated", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--object-cache", type=Path, help="Separate content-checked object cache (defaults to output)")
     parser.add_argument("--template-profile", type=Path, help="Private instrumented template header")
     parser.add_argument("--cc", default="clang")
     parser.add_argument("--optimization", choices=["0", "1", "2", "s", "z"], default="0")
@@ -96,6 +97,8 @@ def main():
     if any(not f.is_file() for f in files):
         parser.error("required source file missing")
     output.mkdir(parents=True, exist_ok=True)
+    cache = a.object_cache.resolve() if a.object_cache else output
+    cache.mkdir(parents=True, exist_ok=True)
     (output/"startup-probe").unlink(missing_ok=True)
     common = [cc, "-std=c11", "-O"+a.optimization, "-fno-fast-math",
         "-ffp-contract=off", "-frounding-math", "-I"+str(source),
@@ -109,7 +112,7 @@ def main():
             command += ['-DMGX_GENERATED_HEADER="'+module+'.h"']
         if f == runtime/"startup-probe/main.c" and a.template_profile:
             command += ['-DMGX_TEMPLATE_PROFILE_HEADER="'+str(a.template_profile.resolve())+'"']
-        return compile_cached(f, output/(f"{index:04d}-"+f.stem+".o"), command, identity, output)
+        return compile_cached(f, cache/(f"{index:04d}-"+f.stem+".o"), command, identity, cache)
     start = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as pool:
         records = list(pool.map(build, enumerate(files)))
@@ -122,7 +125,7 @@ def main():
         temporary.unlink(missing_ok=True)
         raise RuntimeError("link failed\n"+result.stderr[-4000:])
     temporary.replace(executable)
-    report = {"generated_chunks": len(chunks), "objects": records,
+    report = {"generated_chunks": len(chunks), "object_cache": str(cache), "objects": records,
         "reused": sum(r["reused"] for r in records), "link_command": link,
         "executable": str(executable), "executable_sha256": sha(executable),
         "compiler": identity, "elapsed_seconds": time.monotonic()-start,

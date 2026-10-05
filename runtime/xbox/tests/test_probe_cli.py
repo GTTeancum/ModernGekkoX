@@ -28,8 +28,16 @@ class ProbeCLI(unittest.TestCase):
   f=self.root/'strict.bin';r=self.invoke('--strict','--dump-mem1',f);self.assertEqual(r.returncode,0,r.stderr)
   self.assertEqual(json.loads(r.stdout)['bootstrap'],'zero-state-plus-DOL');self.assertTrue(f.is_file())
  def test_audio_profile_default(self):
-  r=self.invoke();self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
+  r=self.invoke('--audio-only');self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
   self.assertEqual(d['bootstrap'],'reference-wii-audio-idle');self.assertEqual(d['dsp_control'],'0x00000804');self.assertEqual(d['ai_control'],'0x00000042');self.assertEqual(d['pi_cause'],'0x00010100');self.assertEqual(d['mmio_events'],[])
+ def test_exi_profile_default(self):
+  r=self.invoke();self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
+  self.assertEqual(d['bootstrap'],'reference-wii-exi-no-cards')
+  self.assertEqual(d['exi_status'],['0x00000800','0x00000880','0x00000000'])
+  self.assertEqual(d['exi_reads'],[0,0,0]);self.assertEqual(d['exi_writes'],[0,0,0])
+ def test_audio_conflicts(self):
+  for other in ['--strict','--cpu-only','--irq-only','--audio-only']:
+   for args in [('--audio-only',other),(other,'--audio-only')]:self.assertEqual(self.invoke(*args).returncode,2)
  def test_irq_only_profile(self):
   r=self.invoke('--irq-only');self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
   self.assertEqual(d['bootstrap'],'reference-wii-irq-init');self.assertEqual(d['dsp_control'],'0x00000000')

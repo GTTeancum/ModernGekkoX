@@ -39,6 +39,7 @@ jobs:
           set -euo pipefail
           python3 runtime/xbox/tests/run_exec_tests.py --compiler-source compiler --sanitize --output artifacts/exec-tests.json 2>&1 | tee artifacts/exec-tests.log
           python3 runtime/xbox/tests/test_trace_bridge.py -v 2>&1 | tee artifacts/trace-bridge-tests.log
+          python3 runtime/xbox/tests/test_nxdk_memory.py -v 2>&1 | tee artifacts/nxdk-memory-tests.log
           python3 runtime/xbox/tests/test_host_builder.py -v 2>&1 | tee artifacts/host-builder-tests.log
           python3 runtime/xbox/tests/test_probe_cli.py --compiler-source compiler -v 2>&1 | tee artifacts/probe-cli-tests.log
       - uses: actions/checkout@v4
@@ -60,6 +61,7 @@ jobs:
           nxdk-cc -std=gnu11 -O1 -fno-fast-math -ffp-contract=off -frounding-math -Icompiler/src -Iruntime/xbox/include -include runtime/xbox/include/mgx_math_redirect.h -c compiler/src/cpu/cpu.c -o artifacts/cpu-xbox.obj
           llvm-readobj --file-headers artifacts/mgx_exec-xbox.obj artifacts/cpu-xbox.obj > artifacts/exec-coff-headers.txt
           grep -q IMAGE_FILE_MACHINE_I386 artifacts/exec-coff-headers.txt
+          python3 runtime/xbox/tests/test_xbox_builder.py --sdk sdk/nxdk --compiler-source compiler -v 2>&1 | tee artifacts/nxdk-builder-tests.log
           cp runtime/xbox/loader-probe/bin/default.xbe artifacts/ModernGekkoX-loader-probe.xbe
           cp runtime/xbox/math-probe/bin/default.xbe artifacts/ModernGekkoX-math-probe.xbe
           llvm-readobj --file-headers runtime/xbox/math-probe/main.exe > artifacts/math-pe-headers.txt

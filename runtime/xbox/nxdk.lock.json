@@ -1,0 +1,11 @@
+{
+  "repository": "XboxDev/nxdk",
+  "revision": "14d5ee97e73347c973f1f57b68b79ec08c9e77f2",
+  "required_file_sha256": {
+    "bin/nxdk-cc": "85d255e469eacd308baa0aaf9f0dbed3075c0a973f481e6413191c1c6cbaaf44",
+    "bin/nxdk-link": "7ef2f2dd2739f32ebb65d13ad1edd469ecf005fbc0eb4a4a107d5261a188c84a",
+    "lib/xboxkrnl/xboxkrnl.h": "988e679c3e042bb9f0c3836a77d3aee24117e83683da9cf839ba2a84c7fe32fb",
+    "lib/xboxkrnl/xboxdef.h": "c3bec825c59e5814ce51c4a69c3dbc09e14429332b295cdd2b1afca224bc583e",
+    "lib/nxdk/xbe.h": "8d3bca61a1f79ce358112d7d2aa3ee3b23534d0aacefcceb25f7099cc7ada5bc"
+  }
+}

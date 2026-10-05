@@ -4,3 +4,6 @@
 [submodule "lib/DolRecomp"]
 	path = lib/DolRecomp
 	url = https://github.com/ExpansionPak/DolRecomp.git
+[submodule "lib/nxdk"]
+	path = lib/nxdk
+	url = https://github.com/XboxDev/nxdk.git

@@ -9,10 +9,10 @@ static void stop(mgx_execution *r,const char *why,uint32_t address,uint64_t valu
 }
 static mgx_execution *run_for(CPUState *cpu){return (mgx_execution *)cpu->external_user_data;}
 static int wii_profile(mgx_boot_profile p){
-    return p==MGX_BOOT_WII_CPU || p==MGX_BOOT_WII_IRQ || p==MGX_BOOT_WII_AUDIO;
+    return p==MGX_BOOT_WII_CPU || p==MGX_BOOT_WII_IRQ || p==MGX_BOOT_WII_AUDIO || p==MGX_BOOT_WII_EXI;
 }
 static int irq_profile(mgx_boot_profile p){
-    return p==MGX_BOOT_WII_IRQ || p==MGX_BOOT_WII_AUDIO;
+    return p==MGX_BOOT_WII_IRQ || p==MGX_BOOT_WII_AUDIO || p==MGX_BOOT_WII_EXI;
 }
 static uint32_t word_be(const uint8_t *p){
     return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
@@ -205,7 +205,7 @@ static void audio_check_idle(mgx_execution *r,uint32_t address,uint64_t value,ui
         stop(r,"unsupported-active-audio-state",address,value,width,0);
 }
 static int audio_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *out){
-    if(r->profile!=MGX_BOOT_WII_AUDIO)return 0;
+    if(r->profile!=MGX_BOOT_WII_AUDIO && r->profile!=MGX_BOOT_WII_EXI)return 0;
     const int reg=audio_register(address);if(!reg)return 0;
     if((reg==1 && (width!=2 || (address&1u))) ||
        (reg==2 && (width!=4 || (address&3u))))
@@ -217,7 +217,7 @@ static int audio_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *
     *out=v;return 1;
 }
 static int audio_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
-    if(r->profile!=MGX_BOOT_WII_AUDIO)return 0;
+    if(r->profile!=MGX_BOOT_WII_AUDIO && r->profile!=MGX_BOOT_WII_EXI)return 0;
     const int reg=audio_register(address);if(!reg)return 0;
     if((reg==1 && (width!=2 || (address&1u))) ||
        (reg==2 && (width!=4 || (address&3u))))
@@ -234,18 +234,89 @@ static int audio_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t 
     else {r->audio.ai_control=(uint32_t)value&~8u;++r->audio.ai_writes;}
     irq_record(r,address,(uint32_t)value,width,1);return 1;
 }
+/* Status-only EXI model. No external cards are attached in this explicit
+   reference profile. CS may select only the explicitly absent device 0. Clocks and ROMDIS
+   are stored configuration only; any actual transfer/ROM read still stops. Device EXIINT/TCINT are never invented. */
+static int exi_register(uint32_t address){
+    uint32_t a=address;
+    if(a>=0xcd006800u && a<0xcd006838u)a-=0xc0000000u;
+    for(unsigned i=0;i<3;++i){
+        if(a>=0x0d006800u+20u*i && a<0x0d006804u+20u*i)return (int)(i*2);
+        if(a>=0x0d00680cu+20u*i && a<0x0d006810u+20u*i)return (int)(i*2+1);
+    }
+    return -1;
+}
+static uint32_t exi_pending(const mgx_boot_exi *e){
+    for(unsigned i=0;i<3;++i){
+        uint32_t s=e->status[i];
+        if((s&2u && s&1u) || (s&8u && s&4u) ||
+           (i<2 && (s&0x800u) && (s&0x400u)))return 0x10u;
+    }
+    return 0;
+}
+static void exi_check_state(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
+    /* A latched insertion event is modeled even with no card present. A live
+       transfer/device event, selection of an unmodeled device or unexplained PI
+       source must not disappear as a side effect of a control write. */
+    for(unsigned i=0;i<3;++i){
+        uint32_t allowed=(i<2?0xc05u:5u)|0xf0u|(i==0?0x2000u:0u);
+        uint32_t fixed=0;
+        if((r->exi.status[i]&~allowed)!=fixed || r->exi.control[i])
+            stop(r,"unsupported-active-exi-state",address,value,width,0);
+    }
+    if((r->irq.pi_cause&0x10u)!=exi_pending(&r->exi))
+        stop(r,"inconsistent-exi-interrupt-state",address,value,width,0);
+}
+static int exi_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *out){
+    if(r->profile!=MGX_BOOT_WII_EXI)return 0;
+    int reg=exi_register(address);if(reg<0)return 0;unsigned channel=(unsigned)reg/2;
+    if(width!=4 || (address&3u))stop(r,"unsupported-mmio-width",address,0,width,0);
+    exi_check_state(r,address,0,width);irq_check_capacity(r,address,0,width);
+    uint32_t v=(reg&1)?r->exi.control[channel]:r->exi.status[channel];
+    irq_record(r,address,v,width,0);++r->exi.reads[channel];*out=v;return 1;
+}
+static int exi_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
+    if(r->profile!=MGX_BOOT_WII_EXI)return 0;
+    int reg=exi_register(address);if(reg<0)return 0;unsigned channel=(unsigned)reg/2;
+    if(width!=4 || (address&3u))stop(r,"unsupported-mmio-width",address,value,width,0);
+    exi_check_state(r,address,value,width);
+    if(reg&1){
+        if(value)stop(r,"unsupported-exi-transfer",address,value,width,0);
+        irq_check_capacity(r,address,value,width);
+        r->exi.control[channel]=0;++r->exi.writes[channel];
+        irq_record(r,address,0,width,1);return 1;
+    }
+    /* CS0 selects no device in this profile. Clock/ROMDIS are stored, but
+       transfers and boot-ROM access remain unsupported. Presence is not writable.
+       EXTINT is a real W1C latch on channels 0/1, not on channel 2. */
+    uint32_t controls=(channel<2?0x405u:5u)|0xf0u|(channel==0?0x2000u:0u);
+    uint32_t ack=channel<2?0x80au:0xau;
+    uint32_t fixed=0;
+    if((value&~(uint64_t)(controls|ack))!=fixed)
+        stop(r,"unsupported-exi-control-transition",address,value,width,0);
+    irq_check_capacity(r,address,value,width);
+    uint32_t before=r->exi.status[channel];
+    r->exi.status[channel]=(before&~(controls|((uint32_t)value&ack)))|((uint32_t)value&controls);
+    ++r->exi.writes[channel];
+    r->irq.pi_cause=(r->irq.pi_cause&~0x10u)|exi_pending(&r->exi);
+    r->irq.pi_pending=r->irq.pi_cause&r->irq.pi_mask&0x7fffu;
+    irq_record(r,address,(uint32_t)value,width,1);
+    /* Preserve committed state, but do not invent delivery of an interrupt. */
+    if(r->irq.pi_pending)stop(r,"unsupported-pending-pi-interrupt",address,value,width,0);
+    return 1;
+}
 static uint64_t read_external(CPUState *cpu,uint32_t address,uint8_t width){
     mgx_execution *r=run_for(cpu);
     const uint8_t *p=mgx_memory_pointer(&r->memory,address,width);
     if(!p){
-        uint64_t value=0;if(irq_read(r,address,width,&value) || audio_read(r,address,width,&value))return value;
+        uint64_t value=0;if(irq_read(r,address,width,&value) || audio_read(r,address,width,&value) || exi_read(r,address,width,&value))return value;
         stop(r,"unimplemented-memory-read",address,0,width,0);
     }
     uint64_t v=0;for(unsigned i=0;i<width;++i)v=(v<<8)|p[i];return v;
 }
 static void write_external(CPUState *cpu,uint32_t address,uint64_t value,uint8_t width){
     mgx_execution *r=run_for(cpu);
-    if(!mgx_memory_pointer(&r->memory,address,width) && (irq_write(r,address,value,width) || audio_write(r,address,value,width)))return;
+    if(!mgx_memory_pointer(&r->memory,address,width) && (irq_write(r,address,value,width) || audio_write(r,address,value,width) || exi_write(r,address,value,width)))return;
     check_write(cpu,address,value,width,r);
     uint8_t *p=mgx_memory_pointer(&r->memory,address,width);
     ppc_clear_reservation_for_store(cpu,address,width);
@@ -384,9 +455,12 @@ void mgx_exec_run_template(mgx_execution *r,CPUState *cpu,const mgx_memory *memo
            VI pending (masked) and reset button unpressed must not be erased. */
         r->irq.pi_cause=0x00010100u;r->irq.ppc_mask=0x40000000u;
     }
-    if(profile==MGX_BOOT_WII_AUDIO){
+    if(profile==MGX_BOOT_WII_AUDIO || profile==MGX_BOOT_WII_EXI){
         r->audio.dsp_control=MGX_DSP_IDLE_CONTROL;
         r->audio.ai_control=MGX_AI_IDLE_CONTROL;
+    }
+    if(profile==MGX_BOOT_WII_EXI){
+        r->exi.status[0]=0x800u;r->exi.status[1]=0x880u;r->exi.status[2]=0;
     }
     unsigned old_depth=dolrecomp_call_depth;dolrecomp_call_depth=0;
     PPCMemWriteJournal old_journal=g_mem_write_journal;void *old_user=g_mem_write_journal_user;

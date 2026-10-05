@@ -27,9 +27,15 @@ class ProbeCLI(unittest.TestCase):
  def test_strict_and_snapshot(self):
   f=self.root/'strict.bin';r=self.invoke('--strict','--dump-mem1',f);self.assertEqual(r.returncode,0,r.stderr)
   self.assertEqual(json.loads(r.stdout)['bootstrap'],'zero-state-plus-DOL');self.assertTrue(f.is_file())
- def test_irq_profile_default(self):
+ def test_audio_profile_default(self):
   r=self.invoke();self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
-  self.assertEqual(d['bootstrap'],'reference-wii-irq-init');self.assertEqual(d['pi_cause'],'0x00010100');self.assertEqual(d['mmio_events'],[])
+  self.assertEqual(d['bootstrap'],'reference-wii-audio-idle');self.assertEqual(d['dsp_control'],'0x00000804');self.assertEqual(d['ai_control'],'0x00000042');self.assertEqual(d['pi_cause'],'0x00010100');self.assertEqual(d['mmio_events'],[])
+ def test_irq_only_profile(self):
+  r=self.invoke('--irq-only');self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
+  self.assertEqual(d['bootstrap'],'reference-wii-irq-init');self.assertEqual(d['dsp_control'],'0x00000000')
+ def test_irq_conflicts(self):
+  for other in ['--strict','--cpu-only','--irq-only']:
+   for args in [('--irq-only',other),(other,'--irq-only')]:self.assertEqual(self.invoke(*args).returncode,2)
  def test_cpu_only_profile(self):
   r=self.invoke('--cpu-only');self.assertEqual(r.returncode,0,r.stderr)
   self.assertEqual(json.loads(r.stdout)['bootstrap'],'dolphin-wii-cpu-only')

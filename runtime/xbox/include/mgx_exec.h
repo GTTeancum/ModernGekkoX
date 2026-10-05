@@ -12,7 +12,15 @@
    no devices or pending DMA. Cache timings/dirty-line loss are not emulated. */
 /* WII_IRQ extends WII_CPU with an explicit reference interrupt-register
    snapshot. It is not a complete device model or an apploader handoff. */
-typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ } mgx_boot_profile;
+typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ, MGX_BOOT_WII_AUDIO } mgx_boot_profile;
+/* WII_AUDIO adds halted DSP and stopped AI control/mask registers only.
+   No DSP execution, reset completion, DMA, mailboxes or audio output. */
+#define MGX_DSP_IDLE_CONTROL 0x00000804u
+#define MGX_AI_IDLE_CONTROL  0x00000042u
+typedef struct {
+    uint32_t dsp_control,ai_control;
+    uint32_t dsp_reads,dsp_writes,ai_reads,ai_writes;
+} mgx_boot_audio;
 #define MGX_MMIO_TRACE_CAPACITY 64u
 typedef struct {
     uint32_t pc,address,value,width,is_write;
@@ -63,6 +71,7 @@ typedef struct {
     const mgx_code_template *code_template;
     uint32_t template_writes,template_instruction_reads;
     mgx_boot_irq irq;
+    mgx_boot_audio audio;
     jmp_buf escape;
 } mgx_execution;
 void mgx_exec_run(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,

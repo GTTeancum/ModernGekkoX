@@ -9,7 +9,10 @@ static void stop(mgx_execution *r,const char *why,uint32_t address,uint64_t valu
 }
 static mgx_execution *run_for(CPUState *cpu){return (mgx_execution *)cpu->external_user_data;}
 static int wii_profile(mgx_boot_profile p){
-    return p==MGX_BOOT_WII_CPU || p==MGX_BOOT_WII_IRQ;
+    return p==MGX_BOOT_WII_CPU || p==MGX_BOOT_WII_IRQ || p==MGX_BOOT_WII_AUDIO;
+}
+static int irq_profile(mgx_boot_profile p){
+    return p==MGX_BOOT_WII_IRQ || p==MGX_BOOT_WII_AUDIO;
 }
 static uint32_t word_be(const uint8_t *p){
     return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
@@ -127,7 +130,7 @@ static void irq_check_capacity(mgx_execution *r,uint32_t address,uint64_t value,
         stop(r,"mmio-trace-capacity",address,value,width,0);
 }
 static int irq_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *out){
-    if(r->profile!=MGX_BOOT_WII_IRQ)return 0;
+    if(!irq_profile(r->profile))return 0;
     const uint32_t a=irq_physical(address);if(!irq_address(a))return 0;
     uint32_t value;
     if(a>=0x0c003000u && a<0x0c003008u){
@@ -146,7 +149,7 @@ static int irq_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *ou
     *out=value;return 1;
 }
 static int irq_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
-    if(r->profile!=MGX_BOOT_WII_IRQ)return 0;
+    if(!irq_profile(r->profile))return 0;
     const uint32_t a=irq_physical(address);if(!irq_address(a))return 0;
     mgx_boot_irq *q=&r->irq;
     /* Reject unsupported operations before mutation. Pending PI interrupt is
@@ -183,18 +186,66 @@ static int irq_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t wi
     if(q->pi_pending)stop(r,"unsupported-pending-pi-interrupt",address,value,width,0);
     return 1;
 }
+/* Only control registers while both audio engines are inactive. The
+   snapshots are explicit pinned-reference presets, not retail boot evidence.
+   W1C acknowledgments are accepted only for already-clear status bits. */
+static int audio_register(uint32_t address){
+    if((address>=0x0c00500au && address<0x0c00500cu) ||
+       (address>=0xcc00500au && address<0xcc00500cu))return 1;
+    if((address>=0x0d006c00u && address<0x0d006c04u) ||
+       (address>=0xcd006c00u && address<0xcd006c04u))return 2;
+    return 0;
+}
+static void audio_check_idle(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
+    /* No device is generating IRQs. Never silently clear injected/live flags
+       or claim to acknowledge a DSP/audio transaction we did not execute. */
+    if((r->audio.dsp_control&~0x150u)!=MGX_DSP_IDLE_CONTROL ||
+       (r->audio.ai_control&~0x14u)!=MGX_AI_IDLE_CONTROL ||
+       (r->irq.pi_cause&0x60u))
+        stop(r,"unsupported-active-audio-state",address,value,width,0);
+}
+static int audio_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *out){
+    if(r->profile!=MGX_BOOT_WII_AUDIO)return 0;
+    const int reg=audio_register(address);if(!reg)return 0;
+    if((reg==1 && (width!=2 || (address&1u))) ||
+       (reg==2 && (width!=4 || (address&3u))))
+        stop(r,"unsupported-mmio-width",address,0,width,0);
+    audio_check_idle(r,address,0,width);irq_check_capacity(r,address,0,width);
+    const uint32_t v=reg==1?r->audio.dsp_control:r->audio.ai_control;
+    irq_record(r,address,v,width,0);
+    if(reg==1)++r->audio.dsp_reads;else ++r->audio.ai_reads;
+    *out=v;return 1;
+}
+static int audio_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
+    if(r->profile!=MGX_BOOT_WII_AUDIO)return 0;
+    const int reg=audio_register(address);if(!reg)return 0;
+    if((reg==1 && (width!=2 || (address&1u))) ||
+       (reg==2 && (width!=4 || (address&3u))))
+        stop(r,"unsupported-mmio-width",address,value,width,0);
+    audio_check_idle(r,address,value,width);
+    /* Fixed DSP Halt/Init; only IRQ masks change. AI keeps playback stopped
+       and both rate selections unchanged. No reset/active work is accepted. */
+    if((reg==1 && (value&~UINT64_C(0x1f8))!=MGX_DSP_IDLE_CONTROL) ||
+       (reg==2 && (value&~UINT64_C(0x1c))!=MGX_AI_IDLE_CONTROL))
+        stop(r,reg==1?"unsupported-dsp-control-transition":"unsupported-ai-control-transition",address,value,width,0);
+    irq_check_capacity(r,address,value,width);
+    /* Drop acknowledged, already-zero W1C bits, never latch them as status. */
+    if(reg==1){r->audio.dsp_control=(uint32_t)value&~0xa8u;++r->audio.dsp_writes;}
+    else {r->audio.ai_control=(uint32_t)value&~8u;++r->audio.ai_writes;}
+    irq_record(r,address,(uint32_t)value,width,1);return 1;
+}
 static uint64_t read_external(CPUState *cpu,uint32_t address,uint8_t width){
     mgx_execution *r=run_for(cpu);
     const uint8_t *p=mgx_memory_pointer(&r->memory,address,width);
     if(!p){
-        uint64_t value=0;if(irq_read(r,address,width,&value))return value;
+        uint64_t value=0;if(irq_read(r,address,width,&value) || audio_read(r,address,width,&value))return value;
         stop(r,"unimplemented-memory-read",address,0,width,0);
     }
     uint64_t v=0;for(unsigned i=0;i<width;++i)v=(v<<8)|p[i];return v;
 }
 static void write_external(CPUState *cpu,uint32_t address,uint64_t value,uint8_t width){
     mgx_execution *r=run_for(cpu);
-    if(!mgx_memory_pointer(&r->memory,address,width) && irq_write(r,address,value,width))return;
+    if(!mgx_memory_pointer(&r->memory,address,width) && (irq_write(r,address,value,width) || audio_write(r,address,value,width)))return;
     check_write(cpu,address,value,width,r);
     uint8_t *p=mgx_memory_pointer(&r->memory,address,width);
     ppc_clear_reservation_for_store(cpu,address,width);
@@ -328,10 +379,14 @@ void mgx_exec_run_template(mgx_execution *r,CPUState *cpu,const mgx_memory *memo
         r->hid0=0x0011c664u;cpu->msr=0x00002032u;cpu->hid2=0xe0000000u;
         cpu->runtime_cpu=PPC_RUNTIME_BROADWAY;r->hid4=MGX_HID4_WII_PRESET;
     }
-    if(profile==MGX_BOOT_WII_IRQ){
+    if(irq_profile(profile)){
         /* Pinned Dolphin initial PI/IPC snapshot, not measured console state.
            VI pending (masked) and reset button unpressed must not be erased. */
         r->irq.pi_cause=0x00010100u;r->irq.ppc_mask=0x40000000u;
+    }
+    if(profile==MGX_BOOT_WII_AUDIO){
+        r->audio.dsp_control=MGX_DSP_IDLE_CONTROL;
+        r->audio.ai_control=MGX_AI_IDLE_CONTROL;
     }
     unsigned old_depth=dolrecomp_call_depth;dolrecomp_call_depth=0;
     PPCMemWriteJournal old_journal=g_mem_write_journal;void *old_user=g_mem_write_journal_user;

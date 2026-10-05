@@ -26,11 +26,12 @@ int main(int argc,char **argv){
 #ifdef NXDK
     (void)argc;(void)argv;const char *path="D:\\main.dol";XVideoSetMode(640,480,32,REFRESH_DEFAULT);
 #else
-    if(argc<2){fprintf(stderr,"usage: startup-probe main.dol [--strict | --cpu-only] [--dump-mem1 path]\n");return 2;}
-    const char *path=argv[1],*dump_path=NULL;int strict_requested=0,cpu_only_requested=0;
+    if(argc<2){fprintf(stderr,"usage: startup-probe main.dol [--strict | --cpu-only | --irq-only] [--dump-mem1 path]\n");return 2;}
+    const char *path=argv[1],*dump_path=NULL;mgx_boot_profile requested_profile=MGX_BOOT_WII_AUDIO;int profile_requested=0;
     for(int i=2;i<argc;++i){
-        if(!strcmp(argv[i],"--strict")&&!strict_requested&&!cpu_only_requested)strict_requested=1;
-        else if(!strcmp(argv[i],"--cpu-only")&&!strict_requested&&!cpu_only_requested)cpu_only_requested=1;
+        if(!strcmp(argv[i],"--strict")&&!profile_requested){requested_profile=MGX_BOOT_STRICT;profile_requested=1;}
+        else if(!strcmp(argv[i],"--cpu-only")&&!profile_requested){requested_profile=MGX_BOOT_WII_CPU;profile_requested=1;}
+        else if(!strcmp(argv[i],"--irq-only")&&!profile_requested){requested_profile=MGX_BOOT_WII_IRQ;profile_requested=1;}
         else if(!strcmp(argv[i],"--dump-mem1")&&!dump_path&&i+1<argc)dump_path=argv[++i];
         else {fprintf(stderr,"unknown or incomplete startup option\n");return 2;}
     }
@@ -46,15 +47,14 @@ int main(int argc,char **argv){
     mgx_memory memory={cpu->ram,cpu->ram_size,cpu->mem2,cpu->mem2_size};mgx_dol_plan plan;
     mgx_status loaded=mgx_dol_load(read_at,f,size,&memory,&plan);fclose(f);
     if(loaded!=MGX_OK){PRINT("loader rejected input: %s\n",mgx_status_string(loaded));cpu_free(cpu);free(cpu);free(run);return 6;}
-    mgx_boot_profile profile=MGX_BOOT_WII_IRQ;
+    mgx_boot_profile profile=MGX_BOOT_WII_AUDIO;
 #ifndef NXDK
-    if(strict_requested)profile=MGX_BOOT_STRICT;
-    else if(cpu_only_requested)profile=MGX_BOOT_WII_CPU;
+    profile=requested_profile;
 #endif
     /* Explicit reference preset; no authentic apploader or complete devices. */
     mgx_math_init();mgx_exec_run_template(run,cpu,&memory,&plan,mgx_generated_dispatch,10000,profile,profile!=MGX_BOOT_STRICT?MGX_TEMPLATE_PROFILE:NULL);
     PRINT("{\"diagnostic\":\"bounded-generated-startup\",\"bootstrap\":\"%s\",\"entry\":\"0x%08lx\",\"stop\":\"%s\",\"pc\":\"0x%08lx\",\"address\":\"0x%08lx\",\"raw\":\"0x%08lx\",\"dispatches\":%lu,\"exception\":%lu,\"gpr1\":\"0x%08lx\",\"lr\":\"0x%08lx\",\"game_booted\":false,\"trace\":[",
-          profile==MGX_BOOT_WII_IRQ?"reference-wii-irq-init":profile==MGX_BOOT_WII_CPU?"dolphin-wii-cpu-only":"zero-state-plus-DOL",(unsigned long)plan.entry,run->stop.reason,(unsigned long)run->stop.pc,(unsigned long)run->stop.address,(unsigned long)run->stop.raw,(unsigned long)run->stop.dispatches,(unsigned long)cpu->exception,(unsigned long)cpu->gpr[1],(unsigned long)cpu->lr);
+          profile==MGX_BOOT_WII_AUDIO?"reference-wii-audio-idle":profile==MGX_BOOT_WII_IRQ?"reference-wii-irq-init":profile==MGX_BOOT_WII_CPU?"dolphin-wii-cpu-only":"zero-state-plus-DOL",(unsigned long)plan.entry,run->stop.reason,(unsigned long)run->stop.pc,(unsigned long)run->stop.address,(unsigned long)run->stop.raw,(unsigned long)run->stop.dispatches,(unsigned long)cpu->exception,(unsigned long)cpu->gpr[1],(unsigned long)cpu->lr);
     for(uint32_t i=0;i<run->stop.trace_count;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)run->stop.trace[i]);
     PRINT("],\"hid0\":\"0x%08lx\",\"hid0_reads\":%lu,\"hid0_writes\":%lu,\"icache_invalidations\":%lu,\"cache_events\":[%lu,%lu,%lu,%lu],\"locked_cache_invalidations\":%lu,\"trace_truncated\":%s,\"value\":\"0x%08lx\",\"l2cr\":\"0x%08lx\",\"l2_reads\":%lu,\"l2_writes\":%lu,\"l2_invalidations\":%lu",
           (unsigned long)run->hid0,(unsigned long)run->hid0_reads,(unsigned long)run->hid0_writes,
@@ -89,6 +89,10 @@ int main(int argc,char **argv){
               (unsigned long)ev->width,ev->is_write?"true":"false");
     }
     PRINT("]");
+    PRINT(",\"dsp_control\":\"0x%08lx\",\"ai_control\":\"0x%08lx\",\"dsp_control_reads\":%lu,\"dsp_control_writes\":%lu,\"ai_control_reads\":%lu,\"ai_control_writes\":%lu",
+          (unsigned long)run->audio.dsp_control,(unsigned long)run->audio.ai_control,
+          (unsigned long)run->audio.dsp_reads,(unsigned long)run->audio.dsp_writes,
+          (unsigned long)run->audio.ai_reads,(unsigned long)run->audio.ai_writes);
     PRINT(",\"gpr\":[");
     for(unsigned i=0;i<32;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)cpu->gpr[i]);
     const uint8_t *before=mgx_memory_pointer(&memory,run->stop.address,4);

@@ -23,6 +23,9 @@ def main():
   pmu_obj=temp/'pmu.o';cmd=common+['-c',str(ROOT/'tests/test_pmu.c'),'-o',str(pmu_obj)];commands.append(cmd);subprocess.run(cmd,check=True)
   pmu_exe=temp/'pmu-tests';cmd=common+objects[:-1]+[str(pmu_obj),'-lm','-o',str(pmu_exe)];commands.append(cmd);subprocess.run(cmd,check=True)
   pmu=subprocess.run([str(pmu_exe)],check=True,capture_output=True,text=True,timeout=15);print(pmu.stdout,end='')
+  hid4_obj=temp/'hid4.o';cmd=common+['-c',str(ROOT/'tests/test_hid4.c'),'-o',str(hid4_obj)];commands.append(cmd);subprocess.run(cmd,check=True)
+  hid4_exe=temp/'hid4-tests';cmd=common+objects[:-1]+[str(hid4_obj),'-lm','-o',str(hid4_exe)];commands.append(cmd);subprocess.run(cmd,check=True)
+  hid4=subprocess.run([str(hid4_exe)],check=True,capture_output=True,text=True,timeout=15);print(hid4.stdout,end='')
   if a.output:
-   a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':65,'sanitizers':a.sanitize,'output':result.stdout+boot.stdout+pmu.stdout,'commands':commands,'game_data_used':False},indent=2)+'\n')
+   a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps({'passed':True,'cases':105,'sanitizers':a.sanitize,'output':result.stdout+boot.stdout+pmu.stdout+hid4.stdout,'commands':commands,'game_data_used':False},indent=2)+'\n')
 if __name__=='__main__':main()

@@ -16,6 +16,7 @@ typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU } mgx_boot_profile;
 #define MGX_HID0_DCE  0x00004000u
 #define MGX_HID0_ICFI 0x00000800u
 #define MGX_HID0_DCFI 0x00000400u
+#define MGX_HID4_WII_PRESET 0x83900000u
 typedef int (*mgx_dispatch)(CPUState *,uint32_t);
 typedef struct {
     const char *reason;
@@ -29,6 +30,7 @@ typedef struct {
     mgx_stop stop;
     mgx_boot_profile profile;
     uint32_t l2cr,l2_reads,l2_writes,l2_invalidations;
+    uint32_t hid4,hid4_reads,hid4_writes;
     uint32_t hid0, hid0_reads, hid0_writes, icache_invalidations;
     uint32_t cache_events[4], locked_cache_invalidations;
     /* MMCR0/MMCR1 and PMC1..4. Only event-disabled control is supported. */

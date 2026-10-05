@@ -49,13 +49,20 @@ int main(int argc,char **argv){
           (unsigned long)run->cache_events[3],(unsigned long)run->locked_cache_invalidations,
           run->stop.dispatches>run->stop.trace_count?"true":"false",(unsigned long)run->stop.value,(unsigned long)run->l2cr,(unsigned long)run->l2_reads,
           (unsigned long)run->l2_writes,(unsigned long)run->l2_invalidations);
-    PRINT(",\"pmu_control\":[\"0x%08lx\",\"0x%08lx\"],\"pmu_counter\":[\"0x%08lx\",\"0x%08lx\",\"0x%08lx\",\"0x%08lx\"],\"pmu_reads\":%lu,\"pmu_control_writes\":%lu,\"pmu_counter_writes\":%lu,\"srr0\":\"0x%08lx\",\"srr1\":\"0x%08lx\",\"msr\":\"0x%08lx\"}\n",
+    PRINT(",\"pmu_control\":[\"0x%08lx\",\"0x%08lx\"],\"pmu_counter\":[\"0x%08lx\",\"0x%08lx\",\"0x%08lx\",\"0x%08lx\"],\"pmu_reads\":%lu,\"pmu_control_writes\":%lu,\"pmu_counter_writes\":%lu,\"srr0\":\"0x%08lx\",\"srr1\":\"0x%08lx\",\"msr\":\"0x%08lx\",\"gpr3\":\"0x%08lx\",\"hid4\":\"0x%08lx\",\"hid4_reads\":%lu,\"hid4_writes\":%lu",
           (unsigned long)run->pmu_control[0],(unsigned long)run->pmu_control[1],
           (unsigned long)run->pmu_counter[0],(unsigned long)run->pmu_counter[1],
           (unsigned long)run->pmu_counter[2],(unsigned long)run->pmu_counter[3],
           (unsigned long)run->pmu_reads,(unsigned long)run->pmu_control_writes,
           (unsigned long)run->pmu_counter_writes,(unsigned long)cpu->srr0,
-          (unsigned long)cpu->srr1,(unsigned long)cpu->msr);
+          (unsigned long)cpu->srr1,(unsigned long)cpu->msr,
+          (unsigned long)cpu->gpr[3],(unsigned long)run->hid4,
+          (unsigned long)run->hid4_reads,(unsigned long)run->hid4_writes);
+    PRINT(",\"gpr\":[");
+    for(unsigned i=0;i<32;++i)PRINT("%s\"0x%08lx\"",i?",":"",(unsigned long)cpu->gpr[i]);
+    const uint8_t *before=mgx_memory_pointer(&memory,run->stop.address,4);
+    uint32_t before_word=before?((uint32_t)before[0]<<24)|((uint32_t)before[1]<<16)|((uint32_t)before[2]<<8)|before[3]:0;
+    PRINT("],\"stop_address_backed\":%s,\"stop_address_word\":\"0x%08lx\"}\n",before?"true":"false",(unsigned long)before_word);
     cpu_free(cpu);free(cpu);free(run);
 #ifdef NXDK
     for(;;)Sleep(1000);

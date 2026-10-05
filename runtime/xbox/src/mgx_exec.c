@@ -40,6 +40,7 @@ static int pmu_counter_index(uint16_t spr){
 static uint32_t read_special(CPUState *cpu,uint16_t spr,uint32_t cia){
     mgx_execution *r=run_for(cpu);cpu->pc=cia;
     if(r->profile==MGX_BOOT_WII_CPU && spr==1008){++r->hid0_reads;return r->hid0;}
+    if(r->profile==MGX_BOOT_WII_CPU && spr==1011){++r->hid4_reads;return r->hid4;}
     if(r->profile==MGX_BOOT_WII_CPU && spr==1017){++r->l2_reads;return r->l2cr;}
     if(r->profile==MGX_BOOT_WII_CPU){
         if(spr==952 || spr==956){++r->pmu_reads;return r->pmu_control[spr==956];}
@@ -50,6 +51,15 @@ static uint32_t read_special(CPUState *cpu,uint16_t spr,uint32_t cia){
 }
 static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia){
     mgx_execution *r=run_for(cpu);cpu->pc=cia;
+    if(r->profile==MGX_BOOT_WII_CPU && spr==1011){
+        /* Fixed direct-map CPU profile only. SBE/ST0 and every other bit must
+           retain the documented preset. No BAT/page-table/cache transition
+           can silently pass through our address helpers. This same-value
+           write leaves the mappings and empty/coherent cache unchanged. */
+        if(value!=MGX_HID4_WII_PRESET || r->hid4!=MGX_HID4_WII_PRESET)
+            stop(r,"unsupported-hid4-transition",spr,value,4,0);
+        ppc_memory_fence();++r->hid4_writes;return;
+    }
     if(r->profile==MGX_BOOT_WII_CPU && spr==1008){
         /* Only the ordinary cache-enable bits and I-cache invalidate request
            may change. DCFI is deliberately not self-cleared (Dolphin/Gekko
@@ -141,6 +151,7 @@ void mgx_exec_run_profile(mgx_execution *r,CPUState *cpu,const mgx_memory *memor
         /* Dolphin CBoot::SetupMSR / SetupHID(is_wii=true). Deliberately only
            CPU register presets; low-memory handoff, BATs and IOS are absent. */
         r->hid0=0x0011c664u;cpu->msr=0x00002032u;cpu->hid2=0xe0000000u;
+        cpu->runtime_cpu=PPC_RUNTIME_BROADWAY;r->hid4=MGX_HID4_WII_PRESET;
     }
     unsigned old_depth=dolrecomp_call_depth;dolrecomp_call_depth=0;
     PPCMemWriteJournal old_journal=g_mem_write_journal;void *old_user=g_mem_write_journal_user;

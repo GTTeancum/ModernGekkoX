@@ -29,6 +29,18 @@ jobs:
           python3 runtime/xbox/tests/run_math_i386.py --vectors artifacts/fma-vectors.bin --output artifacts/i386 --qemu 2>&1 | tee artifacts/math-i386.log
       - uses: actions/checkout@v4
         with:
+          repository: GTTeancum/DolRecompX
+          ref: 40b87e284766b9edf4ffcabd4cd9271279514059
+          path: compiler
+          persist-credentials: false
+      - name: Validate fail-closed execution bridge (synthetic only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 runtime/xbox/tests/run_exec_tests.py --compiler-source compiler --sanitize --output artifacts/exec-tests.json 2>&1 | tee artifacts/exec-tests.log
+          python3 runtime/xbox/tests/test_trace_bridge.py -v 2>&1 | tee artifacts/trace-bridge-tests.log
+      - uses: actions/checkout@v4
+        with:
           repository: XboxDev/nxdk
           ref: 14d5ee97e73347c973f1f57b68b79ec08c9e77f2
           path: sdk/nxdk

@@ -12,7 +12,7 @@
    no devices or pending DMA. Cache timings/dirty-line loss are not emulated. */
 /* WII_IRQ extends WII_CPU with an explicit reference interrupt-register
    snapshot. It is not a complete device model or an apploader handoff. */
-typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ, MGX_BOOT_WII_AUDIO, MGX_BOOT_WII_EXI } mgx_boot_profile;
+typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ, MGX_BOOT_WII_AUDIO, MGX_BOOT_WII_EXI, MGX_BOOT_WII_EXI_PROBE } mgx_boot_profile;
 /* WII_AUDIO adds halted DSP and stopped AI control/mask registers only.
    No DSP execution, reset completion, DMA, mailboxes or audio output. */
 #define MGX_DSP_IDLE_CONTROL 0x00000804u
@@ -21,11 +21,13 @@ typedef struct {
     uint32_t dsp_control,ai_control;
     uint32_t dsp_reads,dsp_writes,ai_reads,ai_writes;
 } mgx_boot_audio;
-/* EXI reference: no external cards, no transfers. Preserve initial insertion
+/* EXI reference: no cards; PROBE adds absent-SP1 shifts. Preserve insertion
    latches and channel-1 CS rather than fabricating all-zero register values. */
 typedef struct {
     uint32_t status[3],control[3];
     uint32_t reads[3],writes[3];
+    /* PROBE only: explicit absent SP1 endpoint, synchronous immediate shifts. */
+    uint32_t immediate[3],transfers[3],transfer_bytes[3];
 } mgx_boot_exi;
 #define MGX_MMIO_TRACE_CAPACITY 64u
 typedef struct {
@@ -79,6 +81,7 @@ typedef struct {
     mgx_boot_irq irq;
     mgx_boot_audio audio;
     mgx_boot_exi exi;
+    uint32_t di_config,di_config_reads;
     jmp_buf escape;
 } mgx_execution;
 void mgx_exec_run(mgx_execution *run,CPUState *cpu,const mgx_memory *memory,

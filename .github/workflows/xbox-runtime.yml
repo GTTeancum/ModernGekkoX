@@ -41,6 +41,7 @@ jobs:
           python3 runtime/xbox/tests/test_trace_bridge.py -v 2>&1 | tee artifacts/trace-bridge-tests.log
           python3 runtime/xbox/tests/test_nxdk_memory.py -v 2>&1 | tee artifacts/nxdk-memory-tests.log
           python3 runtime/xbox/tests/test_host_builder.py -v 2>&1 | tee artifacts/host-builder-tests.log
+          python3 runtime/xbox/tests/test_memory_audit.py -v 2>&1 | tee artifacts/memory-audit-tests.log
           python3 runtime/xbox/tests/test_probe_cli.py --compiler-source compiler -v 2>&1 | tee artifacts/probe-cli-tests.log
       - uses: actions/checkout@v4
         with:

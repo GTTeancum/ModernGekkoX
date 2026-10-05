@@ -51,3 +51,14 @@ claimed merely because the native call compiles and links.
 Synthetic tests cover the query glue, cache rejection and two real nxdk links
 with complete object reuse and identical PE bytes. Those XBEs are not executed
 by the test. Actual hardware execution remains a separate milestone.
+
+## Static image memory audit
+
+`tools/audit_pe_memory.py main.exe` validates an I386 PE32 image and reports its
+mapped sections plus an explicit image+MEM1 lower bound. The Xbox builder embeds
+this audit in `build-report.json`. The default comparison is against 64 MiB;
+this is a planning baseline, not detected user hardware. It does not subtract
+allocations already made by the running kernel, inspect fragmentation, or
+account for additional MEM2, asset, GPU, heap and stack use. `fits_hardware` stays
+unknown even if the lower bound is below the baseline. Actual memory reporting
+continues to require executing the native MmQueryStatistics path on an Xbox.

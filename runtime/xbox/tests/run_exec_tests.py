@@ -17,7 +17,7 @@ def main():
    o=temp/(f.stem+'.o');cmd=common.copy()
    if f==src/'cpu/cpu.c':cmd+=['-include',str(ROOT/'include/mgx_math_redirect.h')]
    run(cmd+['-c',str(f),'-o',str(o)]);objects.append(str(o))
-  for name in ['exec','boot_profile','pmu','hid4','code_writes','template','boot_irq','boot_audio','boot_exi']:
+  for name in ['exec','boot_profile','pmu','hid4','code_writes','template','boot_irq','boot_audio','boot_exi','exi_probe']:
    obj=temp/(name+'.o');exe=temp/(name+'-tests')
    run(common+['-c',str(ROOT/'tests'/('test_'+name+'.c')),'-o',str(obj)])
    run(common+objects+[str(obj),'-lm','-o',str(exe)])

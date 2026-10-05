@@ -9,6 +9,7 @@ without compiler identity are not imported.
 import argparse,concurrent.futures,hashlib,json,os,shlex,shutil,struct,subprocess
 from pathlib import Path
 from build_host_probe import sha,dependency_paths
+from audit_pe_memory import audit as audit_memory
 
 def reusable(item,source,identity,old_identity):
     try:
@@ -110,7 +111,7 @@ def main():
             'nxdk_revision':lock['revision'],'generated_chunks':len(chunks),'all_generated_chunks_linked':True,
             'objects_linked':len(records),'reused_verified_objects':sum(r['reused'] for r in records),
             'compiled_objects':sum(not r['reused'] for r in records),
-            'pe_size_of_image':pe_image_size(exe),'xbe_size':xbe.stat().st_size,'xbe_sha256':sha(xbe),
+            'memory_audit':audit_memory(exe),'pe_size_of_image':pe_image_size(exe),'xbe_size':xbe.stat().st_size,'xbe_sha256':sha(xbe),
             'xbox_hardware_tested':False,'game_booted':False,'commands':commands,'objects':records,
             'link_input_hashes':{str(f):sha(f) for f in objects+libs},'cxbe_sha256':sha(cxbe),
             'linker_sha256':sha(Path(ld).resolve()),'link_wrapper_sha256':sha(sdk/'bin/nxdk-link')}

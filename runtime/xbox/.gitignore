@@ -1,0 +1,8 @@
+*.obj
+*.d
+*.so
+__pycache__/
+loader-probe/main.exe
+loader-probe/main.lib
+loader-probe/main.exp
+loader-probe/bin/

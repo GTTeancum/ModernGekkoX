@@ -5,6 +5,7 @@
 #include <string.h>
 static unsigned cases,checks,mode,alias,length,split,continued;
 static uint32_t input;
+static mgx_boot_profile active_profile;
 #define CHECK(x) do { ++checks; if(!(x)){fprintf(stderr,"serial case %u mode %u line %d: %s\n",cases,mode,__LINE__,#x);exit(1);} } while(0)
 static uint32_t base(void){return alias?0xcd006800u:0x0d006800u;}
 static void shift(CPUState *c,uint32_t word,unsigned n,unsigned write){
@@ -101,8 +102,10 @@ static void one(unsigned m,uint32_t v,mgx_boot_profile profile,const char *why){
     if(m==12 || m==13)CHECK(!r->irq.event_count);
     free(c->ram);free(c);free(r);
 }
-#define RUN(m,v,why) one(m,v,MGX_BOOT_WII_SERIAL,why)
+#define RUN(m,v,why) one(m,v,active_profile,why)
 int main(void){
+    mgx_boot_profile profiles[]={MGX_BOOT_WII_SERIAL,MGX_BOOT_WII_VI_CLOCK_NTSC,MGX_BOOT_WII_VI_CLOCK_27MHZ,MGX_BOOT_WII_SI_POLL_DORMANT};
+    for(unsigned p=0;p<4;++p){active_profile=profiles[p];
     for(alias=0;alias<2;++alias){
         RUN(0,0,"untranslated-address");
         for(split=1;split<4;++split)for(length=1;length<=4;++length){RUN(1,0x41420043,"untranslated-address");RUN(1,0,"untranslated-address");}
@@ -119,6 +122,7 @@ int main(void){
         RUN(15,0,"untranslated-address");
         uint32_t controls[]={3,7,9,13,0x40,0x10000000};for(unsigned i=0;i<6;++i)RUN(16,controls[i],"unsupported-exi-transfer");
         RUN(17,0,"unimplemented-external-pointer");one(18,0,MGX_BOOT_WII_EXI_PROBE,"unsupported-exi-control-transition");
+    }
     }
     printf("PASS: %u synthetic serial cases; %u checks\n",cases,checks);return 0;
 }

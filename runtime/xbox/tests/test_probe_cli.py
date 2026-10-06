@@ -38,6 +38,24 @@ class ProbeCLI(unittest.TestCase):
  def test_probe_only(self):
   r=self.invoke('--probe-only');self.assertEqual(r.returncode,0,r.stderr)
   self.assertEqual(json.loads(r.stdout)['bootstrap'],'reference-wii-exi-absent-sp1')
+ def test_vi_clock_presets(self):
+  for option,label,value in [('--vi-clock-ntsc','reference-wii-vi-clock-ntsc','0x00000001'),('--vi-clock-27mhz','reference-wii-vi-clock-27mhz','0x00000000')]:
+   r=self.invoke(option);self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
+   self.assertEqual(d['bootstrap'],label);self.assertEqual(d['vi_clock'],value);self.assertEqual(d['vi_clock_reads'],0)
+   self.assertEqual(d['exi_status'],['0x00000800','0x00000880','0x00000000']);self.assertFalse(d['game_booted'])
+  self.assertNotIn('vi_clock',json.loads(self.invoke().stdout))
+ def test_si_poll_preset(self):
+  r=self.invoke('--si-poll-dormant');self.assertEqual(r.returncode,0,r.stderr);d=json.loads(r.stdout)
+  self.assertEqual(d['bootstrap'],'reference-wii-si-poll-dormant');self.assertEqual(d['vi_clock'],'0x00000001')
+  self.assertEqual(d['si_poll'],'0x01ec0000');self.assertEqual(d['si_poll_reads'],0);self.assertEqual(d['si_poll_writes'],0)
+  for option in [[],['--vi-clock-ntsc'],['--vi-clock-27mhz']]:self.assertNotIn('si_poll',json.loads(self.invoke(*option).stdout))
+ def test_si_poll_conflicts(self):
+  for other in ['--strict','--cpu-only','--irq-only','--audio-only','--exi-only','--probe-only','--vi-clock-ntsc','--vi-clock-27mhz','--si-poll-dormant']:
+   for args in [('--si-poll-dormant',other),(other,'--si-poll-dormant')]:self.assertEqual(self.invoke(*args).returncode,2)
+ def test_vi_clock_conflicts(self):
+  for vi in ['--vi-clock-ntsc','--vi-clock-27mhz']:
+   for other in ['--strict','--cpu-only','--irq-only','--audio-only','--exi-only','--probe-only','--vi-clock-ntsc','--vi-clock-27mhz']:
+    for args in [(vi,other),(other,vi)]:self.assertEqual(self.invoke(*args).returncode,2)
  def test_probe_conflicts(self):
   for other in ['--strict','--cpu-only','--irq-only','--audio-only','--exi-only','--probe-only']:
    for args in [('--probe-only',other),(other,'--probe-only')]:self.assertEqual(self.invoke(*args).returncode,2)

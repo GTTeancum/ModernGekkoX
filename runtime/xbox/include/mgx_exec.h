@@ -5,14 +5,16 @@
 #include "cpu/cpu.h"
 #include <setjmp.h>
 /* Bounded diagnostic only: no complete devices, kernel services or fabricated
-   success. Discard the CPU after this one-shot run. One thread at a time. */
+   success. Discard the CPU after this one-shot run. One thread at a time.
+   Every profile rejects legal timebase access until a guest clock is modeled.
+   CPU callbacks/context and global memory policies are restored on exit. */
 /* STRICT retains the old all-unsupported stop behavior. WII_CPU is an
    explicitly partial Dolphin-derived CPU preset, not a Wii apploader replay.
    The latter uses coherent single-thread RAM, immutable translated text and
    no devices or pending DMA. Cache timings/dirty-line loss are not emulated. */
 /* WII_IRQ extends WII_CPU with an explicit reference interrupt-register
    snapshot. It is not a complete device model or an apploader handoff. */
-typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ, MGX_BOOT_WII_AUDIO, MGX_BOOT_WII_EXI, MGX_BOOT_WII_EXI_PROBE, MGX_BOOT_WII_SERIAL } mgx_boot_profile;
+typedef enum { MGX_BOOT_STRICT, MGX_BOOT_WII_CPU, MGX_BOOT_WII_IRQ, MGX_BOOT_WII_AUDIO, MGX_BOOT_WII_EXI, MGX_BOOT_WII_EXI_PROBE, MGX_BOOT_WII_SERIAL, MGX_BOOT_WII_VI_CLOCK_NTSC, MGX_BOOT_WII_VI_CLOCK_27MHZ, MGX_BOOT_WII_SI_POLL_DORMANT } mgx_boot_profile;
 /* WII_AUDIO adds halted DSP and stopped AI control/mask registers only.
    No DSP execution, reset completion, DMA, mailboxes or audio output. */
 #define MGX_DSP_IDLE_CONTROL 0x00000804u
@@ -38,6 +40,21 @@ typedef struct {
     uint32_t config_f2,config_f3;
     uint8_t output[MGX_SERIAL_CAPACITY];
 } mgx_boot_serial;
+/* Opt-in stored VI clock only, extending SERIAL. The named NTSC value is
+   from the pinned software-reference boot preset, not measured retail state.
+   Real VI clock writes affect timing and remain unsupported by this snapshot. */
+#define MGX_VI_CLOCK_27MHZ 0u
+#define MGX_VI_CLOCK_REFERENCE_NTSC 1u
+typedef struct {
+    uint32_t clock,reads;
+} mgx_boot_vi_clock;
+/* Opt-in fixed-X inactive SI polling configuration, extending NTSC VI.
+   The reference initializes X=492. Only Y may change; no SI device/time model. */
+#define MGX_SI_POLL_REFERENCE 0x01ec0000u
+#define MGX_SI_POLL_Y_MASK 0x0000ff00u
+typedef struct {
+    uint32_t poll,reads,writes;
+} mgx_boot_si_poll;
 typedef struct {
     uint32_t pc,address,value,width,is_write;
 } mgx_mmio_event;
@@ -90,6 +107,8 @@ typedef struct {
     mgx_boot_audio audio;
     mgx_boot_exi exi;
     mgx_boot_serial serial;
+    mgx_boot_vi_clock vi_clock;
+    mgx_boot_si_poll si_poll;
     uint32_t di_config,di_config_reads;
     jmp_buf escape;
 } mgx_execution;

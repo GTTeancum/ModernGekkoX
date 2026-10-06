@@ -8,7 +8,9 @@ static void stop(mgx_execution *r,const char *why,uint32_t address,uint64_t valu
     longjmp(r->escape,1);
 }
 static mgx_execution *run_for(CPUState *cpu){return (mgx_execution *)cpu->external_user_data;}
-static int probe_profile(mgx_boot_profile p){return p==MGX_BOOT_WII_EXI_PROBE || p==MGX_BOOT_WII_SERIAL;}
+static int vi_clock_profile(mgx_boot_profile p){return p==MGX_BOOT_WII_VI_CLOCK_NTSC || p==MGX_BOOT_WII_VI_CLOCK_27MHZ || p==MGX_BOOT_WII_SI_POLL_DORMANT;}
+static int serial_profile(mgx_boot_profile p){return p==MGX_BOOT_WII_SERIAL || vi_clock_profile(p);}
+static int probe_profile(mgx_boot_profile p){return p==MGX_BOOT_WII_EXI_PROBE || serial_profile(p);}
 static int wii_profile(mgx_boot_profile p){
     return p==MGX_BOOT_WII_CPU || p==MGX_BOOT_WII_IRQ || p==MGX_BOOT_WII_AUDIO || p==MGX_BOOT_WII_EXI || probe_profile(p);
 }
@@ -127,7 +129,7 @@ static void irq_record(mgx_execution *r,uint32_t address,uint32_t value,
     if(write)++q->writes;else ++q->reads;
 }
 static void irq_check_capacity(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
-    if(r->irq.event_count>=(r->profile==MGX_BOOT_WII_SERIAL?MGX_SERIAL_MMIO_CAPACITY:MGX_MMIO_TRACE_CAPACITY))
+    if(r->irq.event_count>=(serial_profile(r->profile)?MGX_SERIAL_MMIO_CAPACITY:MGX_MMIO_TRACE_CAPACITY))
         stop(r,"mmio-trace-capacity",address,value,width,0);
 }
 static int irq_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *out){
@@ -262,7 +264,7 @@ static void exi_check_state(mgx_execution *r,uint32_t address,uint64_t value,uin
     /* A latched insertion event is modeled even with no card present. A live
        transfer/device event, selection of an unmodeled device or unexplained PI
        source must not disappear as a side effect of a control write. */
-    if(r->profile==MGX_BOOT_WII_SERIAL && (r->serial.command_bytes>4u ||
+    if(serial_profile(r->profile) && (r->serial.command_bytes>4u ||
        r->serial.output_bytes>MGX_SERIAL_CAPACITY))
         stop(r,"invalid-serial-state",address,value,width,0);
     for(unsigned i=0;i<3;++i){
@@ -270,9 +272,9 @@ static void exi_check_state(mgx_execution *r,uint32_t address,uint64_t value,uin
         uint32_t fixed=0,control=r->exi.control[i],selection=r->exi.status[i]&0x380u;
         if(probe_profile(r->profile) && i==0){
             allowed|=0x208u;
-            if(r->profile==MGX_BOOT_WII_SERIAL)allowed|=0x100u; /* Bounded EUART selection, not general IPL access. */
+            if(serial_profile(r->profile))allowed|=0x100u; /* Bounded EUART selection, not general IPL access. */
             if(selection!=0 && selection!=0x80u && selection!=0x200u &&
-               !(r->profile==MGX_BOOT_WII_SERIAL && selection==0x100u))
+               !(serial_profile(r->profile) && selection==0x100u))
                 stop(r,"unsupported-active-exi-state",address,value,width,0);
             /* Only completed immediate read/write control words are possible. */
             if((control&~0x3cu) || ((control>>2)&3u)>1u)
@@ -355,7 +357,7 @@ static int exi_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t wi
         const uint32_t v=(uint32_t)value,direction=(v>>2)&3u;
         if(value>0x3fu || (v&2u) || direction>1u ||
            ((v&1u) && (r->exi.status[0]&0x380u)!=0x200u &&
-            !(r->profile==MGX_BOOT_WII_SERIAL && (r->exi.status[0]&0x380u)==0x100u)))
+            !(serial_profile(r->profile) && (r->exi.status[0]&0x380u)==0x100u)))
             stop(r,"unsupported-exi-transfer",address,value,width,0);
         irq_check_capacity(r,address,value,width);
         if((v&1u) && (r->exi.status[0]&0x380u)==0x100u)serial_shift(r,address,v);
@@ -386,10 +388,10 @@ static int exi_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t wi
     uint32_t fixed=0;
     if(probe_profile(r->profile) && channel==0){
         controls|=0x200u;
-        if(r->profile==MGX_BOOT_WII_SERIAL)controls|=0x100u;
+        if(serial_profile(r->profile))controls|=0x100u;
         const uint32_t selection=(uint32_t)value&0x380u;
         if(selection!=0 && selection!=0x80u && selection!=0x200u &&
-               !(r->profile==MGX_BOOT_WII_SERIAL && selection==0x100u))
+               !(serial_profile(r->profile) && selection==0x100u))
             stop(r,"unsupported-exi-control-transition",address,value,width,0);
     }
     if((value&~(uint64_t)(controls|ack))!=fixed)
@@ -397,7 +399,7 @@ static int exi_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t wi
     irq_check_capacity(r,address,value,width);
     uint32_t before=r->exi.status[channel];
     r->exi.status[channel]=(before&~(controls|((uint32_t)value&ack)))|((uint32_t)value&controls);
-    if(channel==0 && r->profile==MGX_BOOT_WII_SERIAL &&
+    if(channel==0 && serial_profile(r->profile) &&
        (before&0x380u)!=(r->exi.status[0]&0x380u) && (r->exi.status[0]&0x380u)==0x100u){
         r->serial.command=0;r->serial.command_bytes=0;
     }
@@ -421,11 +423,55 @@ static int di_config_read(mgx_execution *r,uint32_t address,uint8_t width,uint64
     irq_check_capacity(r,address,0,width);++r->di_config_reads;
     irq_record(r,address,r->di_config,width,0);*out=r->di_config;return 1;
 }
+/* Snapshot only: the real/reference register is writable, with timing effects.
+   Do not fake those effects or the adjacent DTV register. See vi-clock-snapshot. */
+static int vi_clock_address(uint32_t a){
+    return (a>=0x0c00206cu && a<0x0c00206eu) ||
+           (a>=0xcc00206cu && a<0xcc00206eu);
+}
+static int vi_clock_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *out){
+    if(!vi_clock_profile(r->profile) || !vi_clock_address(address))return 0;
+    if(width!=2 || (address&1u))stop(r,"unsupported-mmio-width",address,0,width,0);
+    /* This restricts the explicitly admitted preset, not physical reserved bits. */
+    if(r->vi_clock.clock>1u)stop(r,"invalid-vi-clock-snapshot",address,0,width,0);
+    irq_check_capacity(r,address,0,width);
+    ++r->vi_clock.reads;
+    irq_record(r,address,r->vi_clock.clock,width,0);*out=r->vi_clock.clock;return 1;
+}
+/* Bounded configuration storage only. Fixed reference X avoids changing the
+   VI-driven polling interval; EN=0 alone does not disable every reference
+   device callback. No SI callbacks, transfer, timing or IRQ delivery exist. */
+static int si_poll_address(uint32_t a){
+    return (a>=0x0d006430u && a<0x0d006434u) ||
+           (a>=0xcd006430u && a<0xcd006434u);
+}
+static void si_poll_check_idle(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
+    if((r->si_poll.poll&~MGX_SI_POLL_Y_MASK)!=MGX_SI_POLL_REFERENCE ||
+       (r->irq.pi_cause&0x8u) || (r->irq.pi_pending&0x8u))
+        stop(r,"unsupported-active-si-poll-state",address,value,width,0);
+}
+static int si_poll_read(mgx_execution *r,uint32_t address,uint8_t width,uint64_t *out){
+    if(r->profile!=MGX_BOOT_WII_SI_POLL_DORMANT || !si_poll_address(address))return 0;
+    if(width!=4 || (address&3u))stop(r,"unsupported-mmio-width",address,0,width,0);
+    si_poll_check_idle(r,address,0,width);irq_check_capacity(r,address,0,width);
+    ++r->si_poll.reads;
+    irq_record(r,address,r->si_poll.poll,width,0);*out=r->si_poll.poll;return 1;
+}
+static int si_poll_write(mgx_execution *r,uint32_t address,uint64_t value,uint8_t width){
+    if(r->profile!=MGX_BOOT_WII_SI_POLL_DORMANT || !si_poll_address(address))return 0;
+    if(width!=4 || (address&3u))stop(r,"unsupported-mmio-width",address,value,width,0);
+    si_poll_check_idle(r,address,value,width);
+    if((value&~(uint64_t)MGX_SI_POLL_Y_MASK)!=MGX_SI_POLL_REFERENCE)
+        stop(r,"unsupported-si-poll-configuration",address,value,width,0);
+    irq_check_capacity(r,address,value,width);
+    r->si_poll.poll=(uint32_t)value;++r->si_poll.writes;
+    irq_record(r,address,(uint32_t)value,width,1);return 1;
+}
 static uint64_t read_external(CPUState *cpu,uint32_t address,uint8_t width){
     mgx_execution *r=run_for(cpu);
     const uint8_t *p=mgx_memory_pointer(&r->memory,address,width);
     if(!p){
-        uint64_t value=0;if(irq_read(r,address,width,&value) || audio_read(r,address,width,&value) || exi_read(r,address,width,&value) || di_config_read(r,address,width,&value))return value;
+        uint64_t value=0;if(irq_read(r,address,width,&value) || audio_read(r,address,width,&value) || exi_read(r,address,width,&value) || di_config_read(r,address,width,&value) || vi_clock_read(r,address,width,&value) || si_poll_read(r,address,width,&value))return value;
         stop(r,"unimplemented-memory-read",address,0,width,0);
     }
     uint64_t v=0;for(unsigned i=0;i<width;++i)v=(v<<8)|p[i];return v;
@@ -434,7 +480,9 @@ static void write_external(CPUState *cpu,uint32_t address,uint64_t value,uint8_t
     mgx_execution *r=run_for(cpu);
     if(probe_profile(r->profile) && di_config_address(address))
         stop(r,"write-to-readonly-di-config",address,value,width,0);
-    if(!mgx_memory_pointer(&r->memory,address,width) && (irq_write(r,address,value,width) || audio_write(r,address,value,width) || exi_write(r,address,value,width)))return;
+    if(vi_clock_profile(r->profile) && vi_clock_address(address))
+        stop(r,"unsupported-vi-clock-write",address,value,width,0);
+    if(!mgx_memory_pointer(&r->memory,address,width) && (irq_write(r,address,value,width) || audio_write(r,address,value,width) || exi_write(r,address,value,width) || si_poll_write(r,address,value,width)))return;
     check_write(cpu,address,value,width,r);
     uint8_t *p=mgx_memory_pointer(&r->memory,address,width);
     ppc_clear_reservation_for_store(cpu,address,width);
@@ -515,6 +563,13 @@ static void write_special(CPUState *cpu,uint16_t spr,uint32_t value,uint32_t cia
     }
     stop(r,"unimplemented-spr-write",spr,value,4,0);
 }
+/* Every bounded profile lacks a guest clock model. Reject the first legal
+   timebase access, including writes, before architectural side effects. This
+   is an execution boundary, not an invented guest exception or a fake tick. */
+static void timebase_access(CPUState *cpu,uint16_t reg,bool write,uint32_t value,uint32_t cia){
+    cpu->pc=cia;
+    stop(run_for(cpu),write?"unimplemented-timebase-write":"unimplemented-timebase-read",reg,value,4,0);
+}
 static void fallback(CPUState *cpu,uint32_t raw,uint32_t cia){
     cpu->pc=cia;stop(run_for(cpu),"unimplemented-instruction",0,0,4,raw);
 }
@@ -581,12 +636,29 @@ void mgx_exec_run_template(mgx_execution *r,CPUState *cpu,const mgx_memory *memo
         r->exi.status[0]=0x800u;r->exi.status[1]=0x880u;r->exi.status[2]=0;
     }
     if(probe_profile(profile))r->di_config=1u;
+    if(vi_clock_profile(profile))r->vi_clock.clock=profile==MGX_BOOT_WII_VI_CLOCK_27MHZ?MGX_VI_CLOCK_27MHZ:MGX_VI_CLOCK_REFERENCE_NTSC;
+    if(profile==MGX_BOOT_WII_SI_POLL_DORMANT)r->si_poll.poll=MGX_SI_POLL_REFERENCE;
     unsigned old_depth=dolrecomp_call_depth;dolrecomp_call_depth=0;
     PPCMemWriteJournal old_journal=g_mem_write_journal;void *old_user=g_mem_write_journal_user;
     PPCMemWriteCheck old_check=g_mem_write_check;void *old_check_user=g_mem_write_check_user;
+    /* Scope all CPU callbacks and their context together. In particular, a
+       nonlocal clock stop must not leave a pointer to this execution installed. */
+    PPCExternalRead old_read=cpu->external_read;
+    PPCExternalWrite old_write=cpu->external_write;
+    PPCExternalRead32 old_read32=cpu->external_read32;
+    PPCExternalWrite32 old_write32=cpu->external_write32;
+    PPCExternalPointer old_pointer=cpu->external_pointer;
+    PPCInstructionFallback old_fallback=cpu->instruction_fallback;
+    PPCHostCall old_host_call=cpu->host_call;
+    PPCSPRRead old_spr_read=cpu->spr_read;
+    PPCSPRWrite old_spr_write=cpu->spr_write;
+    PPCCacheControl old_cache=cpu->cache_control;
+    PPCTimebaseAccess old_timebase=cpu->timebase_access;
+    void *old_external_user=cpu->external_user_data;
     cpu->external_user_data=r;cpu->external_read=read_external;cpu->external_write=write_external;
     cpu->external_pointer=pointer_external;cpu->external_read32=external32;cpu->external_write32=external32_write;
     cpu->instruction_fallback=fallback;cpu->spr_read=read_special;cpu->spr_write=write_special;cpu->cache_control=cache;
+    cpu->timebase_access=timebase_access;
     cpu->host_call=NULL;cpu->pc=plan->entry;cpu->exception=0;
     /* The legacy observer has no write value. This one-shot runner temporarily
        replaces it with the value-aware check and restores both global hooks. */
@@ -604,6 +676,12 @@ void mgx_exec_run_template(mgx_execution *r,CPUState *cpu,const mgx_memory *memo
     ppc_set_mem_write_check(old_check,old_check_user);
     ppc_set_mem_write_journal(old_journal,old_user);
     dolrecomp_call_depth=old_depth;
+    cpu->external_read=old_read;cpu->external_write=old_write;
+    cpu->external_read32=old_read32;cpu->external_write32=old_write32;
+    cpu->external_pointer=old_pointer;cpu->instruction_fallback=old_fallback;
+    cpu->host_call=old_host_call;cpu->spr_read=old_spr_read;
+    cpu->spr_write=old_spr_write;cpu->cache_control=old_cache;
+    cpu->timebase_access=old_timebase;cpu->external_user_data=old_external_user;
 }
 
 void mgx_exec_run_profile(mgx_execution *r,CPUState *cpu,const mgx_memory *memory,

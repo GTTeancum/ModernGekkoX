@@ -2,9 +2,15 @@
 
 This layer integrates the C-backend CPU state with the bounded DOL loader.
 It is not a working Wii compatibility runtime or a claim of game boot.
+Every profile now rejects the first legal guest timebase access. Historical
+farther frontiers consumed frozen zero time and are not current acceptance
+criteria. See [the safety correction](docs/timebase-guard.md).
 
 Use the pinned CPU source from `GTTeancum/DolRecompX` commit
-`40b87e284766b9edf4ffcabd4cd9271279514059`. The old template submodules
+`713dc980c27120f2b420f9994f8519a51b0743c0`, including the Broadway, pre-store
+and timebase-policy extensions. Rebuild every CPU ABI consumer against this
+`cpu.h`; older baseline objects are incompatible.
+The old template submodules
 are not used. Compile `startup-probe/bridge.c` with
 `MGX_GENERATED_HEADER` naming your privately generated header, and link its
 unmodified C chunks, `cpu.c`, `mgx_dol.c`, `mgx_exec.c`, and `mgx_math.c`.
@@ -62,3 +68,28 @@ python runtime/xbox/tests/test_trace_bridge.py -v
 
 `startup-probe/main.c` opens its DOL argument on the host, or `D:\main.dol` on
 Xbox. A completed diagnostic deliberately reports `game_booted:false`.
+
+## Optional VI clock snapshot
+
+The default EUART profile remains unchanged. `--vi-clock-ntsc` and
+`--vi-clock-27mhz` explicitly add only the stored VI clock halfword read;
+native builds use the corresponding `--boot-profile` option. See
+[the bounded contract and primary sources](docs/vi-clock-snapshot.md).
+Clock writes, video timing, adjacent registers and SI operation remain unsupported.
+
+## Dormant SI polling configuration
+
+`--si-poll-dormant` is a separate opt-in extension of the reference NTSC VI
+snapshot. It stores only fixed-X=492, Y-mutable inactive SI_POLL configuration;
+all transfer/status/timing/controller behavior remains unsupported. Native
+selection is `--boot-profile si-poll-dormant`. The default and both earlier VI
+profiles remain unchanged. See [the exact contract](docs/si-poll-dormant.md).
+
+## Guest timebase safety correction
+
+Every bounded profile now rejects the first legal timebase read/write because
+there is no sourced guest clock. This deliberately exposes an earlier dependency
+than historical device frontiers, which consumed frozen zero time. Those earlier
+results remain historical current-model parity, not hardware timing evidence.
+See [timebase-guard.md](docs/timebase-guard.md) for the generic hook, legality-first
+contract, scoped callback lifecycle, CPU ABI change, and full rebuild requirement.

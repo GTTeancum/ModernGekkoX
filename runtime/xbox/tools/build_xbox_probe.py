@@ -8,8 +8,19 @@ without compiler identity are not imported.
 """
 import argparse,concurrent.futures,hashlib,json,os,shlex,shutil,struct,subprocess
 from pathlib import Path
-from build_host_probe import sha,dependency_paths
+from build_host_probe import sha,dependency_paths,machine_outliner_flags
 from audit_pe_memory import audit as audit_memory
+
+STARTUP_PROFILES = {
+    'serial': None,
+    'vi-clock-ntsc': 'MGX_BOOT_WII_VI_CLOCK_NTSC',
+    'vi-clock-27mhz': 'MGX_BOOT_WII_VI_CLOCK_27MHZ',
+    'si-poll-dormant': 'MGX_BOOT_WII_SI_POLL_DORMANT',
+}
+
+def startup_profile_flags(profile):
+    value = STARTUP_PROFILES[profile]
+    return ['-DMGX_STARTUP_PROFILE='+value] if value else []
 
 def reusable(item,source,identity,old_identity):
     try:
@@ -40,6 +51,10 @@ def main():
     ap.add_argument('--reuse-report',type=Path)
     ap.add_argument('--memory-abi',choices=['cdecl','fastcall'],default='cdecl',
                     help='experimental 32-bit memory-helper convention; SDK ABI unchanged')
+    ap.add_argument('--boot-profile',choices=list(STARTUP_PROFILES),default='serial',
+                    help='opt-in diagnostic profile; serial preserves existing default and cache keys')
+    ap.add_argument('--machine-outliner',action='store_true',
+                    help='experimental LLVM machine outlining for smaller code; disabled by default')
     ap.add_argument('--jobs',type=int,default=2)
     a=ap.parse_args()
     if not 1<=a.jobs<=8:ap.error("--jobs must be in 1..8")
@@ -64,7 +79,7 @@ def main():
         old=json.loads(a.reuse_report.read_text())
         if old['optimization']!=a.optimization:raise ValueError('cache optimization mismatch')
     flags=[str(sdk/'bin/nxdk-cc'),'-std=gnu11','-O'+a.optimization,'-fno-fast-math',
-           '-ffp-contract=off','-frounding-math','-I'+str(src),'-I'+str(rt/'include'),'-I'+str(gen)]
+           '-ffp-contract=off','-frounding-math',*machine_outliner_flags(a.machine_outliner),'-I'+str(src),'-I'+str(rt/'include'),'-I'+str(gen)]
     if a.memory_abi=='fastcall':flags+=['-DDOLRECOMP_X86_FASTCALL=1']
     records=[];commands=[];all_old=old.get('objects',[])
     def compile_one(pair):
@@ -74,6 +89,7 @@ def main():
         if f.name=='bridge.c':extra=['-DMGX_GENERATED_HEADER="'+module+'.h"']
         if f==rt/'startup-probe/main.c' and a.template_profile:
             extra=['-DMGX_TEMPLATE_PROFILE_HEADER="'+str(a.template_profile.resolve())+'"']
+        if f==rt/'startup-probe/main.c':extra+=startup_profile_flags(a.boot_profile)
         key=flags+extra
         found=None
         for item in all_old:
@@ -110,7 +126,7 @@ def main():
     commands.append(cmd);r=subprocess.run(cmd,capture_output=True,text=True,timeout=60)
     (out/'cxbe.log').write_text(r.stdout+r.stderr)
     if r.returncode:raise RuntimeError(r.stderr)
-    result={'target':'i386-pc-win32/pentium3','optimization':a.optimization,'memory_abi':a.memory_abi,'compiler_identity':identity,
+    result={'boot_profile':a.boot_profile,'machine_outliner':a.machine_outliner,'target':'i386-pc-win32/pentium3','optimization':a.optimization,'memory_abi':a.memory_abi,'compiler_identity':identity,
             'nxdk_revision':lock['revision'],'generated_chunks':len(chunks),'all_generated_chunks_linked':True,
             'objects_linked':len(records),'reused_verified_objects':sum(r['reused'] for r in records),
             'compiled_objects':sum(not r['reused'] for r in records),

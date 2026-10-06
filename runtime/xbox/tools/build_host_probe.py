@@ -17,6 +17,11 @@ import shutil
 import subprocess
 import time
 
+def machine_outliner_flags(enabled):
+    # Experimental LLVM backend option. Keep this opt-in and part of the
+    # content-checked command key; it never changes generated source coverage.
+    return ["-mllvm", "-enable-machine-outliner=always"] if enabled else []
+
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -72,6 +77,8 @@ def main():
     parser.add_argument("--template-profile", type=Path, help="Private instrumented template header")
     parser.add_argument("--cc", default="clang")
     parser.add_argument("--optimization", choices=["0", "1", "2", "s", "z"], default="0")
+    parser.add_argument("--machine-outliner", action="store_true",
+                        help="experimental LLVM machine outlining for smaller code; disabled by default")
     parser.add_argument("--jobs", type=int, default=2)
     a = parser.parse_args()
     if not 1 <= a.jobs <= 16:
@@ -101,7 +108,7 @@ def main():
     cache.mkdir(parents=True, exist_ok=True)
     (output/"startup-probe").unlink(missing_ok=True)
     common = [cc, "-std=c11", "-O"+a.optimization, "-fno-fast-math",
-        "-ffp-contract=off", "-frounding-math", "-I"+str(source),
+        "-ffp-contract=off", "-frounding-math", *machine_outliner_flags(a.machine_outliner), "-I"+str(source),
         "-I"+str(runtime/"include"), "-I"+str(generated)]
     def build(pair):
         index, f = pair
@@ -125,7 +132,7 @@ def main():
         temporary.unlink(missing_ok=True)
         raise RuntimeError("link failed\n"+result.stderr[-4000:])
     temporary.replace(executable)
-    report = {"generated_chunks": len(chunks), "object_cache": str(cache), "objects": records,
+    report = {"machine_outliner": a.machine_outliner, "generated_chunks": len(chunks), "object_cache": str(cache), "objects": records,
         "reused": sum(r["reused"] for r in records), "link_command": link,
         "executable": str(executable), "executable_sha256": sha(executable),
         "compiler": identity, "elapsed_seconds": time.monotonic()-start,

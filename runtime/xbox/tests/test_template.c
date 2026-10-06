@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 static unsigned checks,cases,mode,index_value,alias,continued;
+static mgx_boot_profile active_profile;
 static const uint8_t original[]={0x60,0,0,0,0x38,0x60,0,0,0x4e,0x80,0,0x20};
 static const uint32_t token=0x38600000;
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"template case %u mode %u line %d: %s\n",cases,mode,__LINE__,#x);exit(1);}}while(0)
@@ -57,7 +58,7 @@ static void one(unsigned m,unsigned val,unsigned al,unsigned invalid){
     if(invalid==14)t.writer_pc[0]=0x80001001;
     if(invalid==15)t.writer_pc[0]=0x80005000;
     if(invalid==16){put(c->ram+0x1000,0x60000000);t.writer_word[0]=0x60000000;}
-    mgx_execution r;mgx_exec_run_template(&r,c,&mem,&plan,dispatch,2,invalid==17?MGX_BOOT_STRICT:MGX_BOOT_WII_CPU,&t);
+    mgx_execution r;mgx_exec_run_template(&r,c,&mem,&plan,dispatch,2,invalid==17?MGX_BOOT_STRICT:active_profile,&t);
     const char*why=invalid?"invalid-template-profile":mode==8?"unregistered-template-instruction":mode==9?"invalid-template-instruction":mode?"write-to-translated-code":"untranslated-address";
     CHECK(!strcmp(r.stop.reason,why));CHECK(!continued);
     if(!invalid&&!mode){CHECK(r.template_writes==(val?2u:0u));CHECK(r.template_instruction_reads==1);}
@@ -66,8 +67,11 @@ static void one(unsigned m,unsigned val,unsigned al,unsigned invalid){
     free(c->ram);free(c);
 }
 int main(void){
+    mgx_boot_profile profiles[]={MGX_BOOT_WII_CPU,MGX_BOOT_WII_VI_CLOCK_NTSC,MGX_BOOT_WII_VI_CLOCK_27MHZ,MGX_BOOT_WII_SI_POLL_DORMANT};
+    for(unsigned p=0;p<4;++p){active_profile=profiles[p];
     for(unsigned a=0;a<3;++a)for(unsigned v=0;v<15;++v)one(0,v,a,0);
     for(unsigned m=1;m<=9;++m)one(m,1,0,0);
     for(unsigned i=1;i<=17;++i)one(0,1,0,i);
+    }
     printf("PASS: %u synthetic template cases; %u checks\n",cases,checks);return 0;
 }

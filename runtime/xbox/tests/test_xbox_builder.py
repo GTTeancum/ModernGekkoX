@@ -22,6 +22,11 @@ class CacheTests(unittest.TestCase):
  def test_object_change(self):self.o.write_bytes(b'changed');self.assertFalse(self.valid())
  def test_missing_dependency(self):self.h.unlink();self.assertFalse(self.valid())
  def test_empty_dependencies(self):self.item['dependencies']={};self.assertFalse(self.valid())
+ def test_startup_profile_flags(self):
+  self.assertEqual(build.startup_profile_flags('serial'),[])
+  self.assertEqual(build.startup_profile_flags('si-poll-dormant'),['-DMGX_STARTUP_PROFILE=MGX_BOOT_WII_SI_POLL_DORMANT'])
+  self.assertEqual(build.startup_profile_flags('vi-clock-ntsc'),['-DMGX_STARTUP_PROFILE=MGX_BOOT_WII_VI_CLOCK_NTSC'])
+  self.assertEqual(build.startup_profile_flags('vi-clock-27mhz'),['-DMGX_STARTUP_PROFILE=MGX_BOOT_WII_VI_CLOCK_27MHZ'])
  def test_pe_validation(self):
   pe=self.p/'test.exe';pe.write_bytes(b'bad')
   with self.assertRaises(ValueError):build.pe_image_size(pe)
@@ -50,6 +55,31 @@ class NxdkLink(unittest.TestCase):
    subprocess.run(base+['--memory-abi','fastcall','--output',str(p/'fast-repeat'),'--reuse-report',str(p/'fast/build-report.json')],check=True,capture_output=True,text=True,timeout=120)
    repeated=json.loads((p/'fast-repeat/build-report.json').read_text());self.assertEqual(repeated['reused_verified_objects'],8)
    self.assertEqual((p/'fast/main.exe').read_bytes(),(p/'fast-repeat/main.exe').read_bytes())
+   self.assertFalse(first['machine_outliner'])
+   outlined_args=base+['--memory-abi','fastcall','--machine-outliner']
+   subprocess.run(outlined_args+['--output',str(p/'outlined'),'--reuse-report',str(p/'fast/build-report.json')],check=True,capture_output=True,text=True,timeout=120)
+   outlined=json.loads((p/'outlined/build-report.json').read_text())
+   self.assertTrue(outlined['machine_outliner']);self.assertEqual(outlined['compiled_objects'],8);self.assertEqual(outlined['reused_verified_objects'],0)
+   self.assertTrue(all('-enable-machine-outliner=always' in r['compile_key'] for r in outlined['objects']))
+   subprocess.run(outlined_args+['--output',str(p/'outlined-repeat'),'--reuse-report',str(p/'outlined/build-report.json')],check=True,capture_output=True,text=True,timeout=120)
+   outline_repeat=json.loads((p/'outlined-repeat/build-report.json').read_text());self.assertEqual(outline_repeat['reused_verified_objects'],8)
+   self.assertEqual((p/'outlined/main.exe').read_bytes(),(p/'outlined-repeat/main.exe').read_bytes())
+   subprocess.run(base+['--memory-abi','fastcall','--output',str(p/'back-to-default'),'--reuse-report',str(p/'outlined/build-report.json')],check=True,capture_output=True,text=True,timeout=120)
+   back=json.loads((p/'back-to-default/build-report.json').read_text());self.assertFalse(back['machine_outliner']);self.assertEqual(back['reused_verified_objects'],0)
+   self.assertEqual((p/'fast/main.exe').read_bytes(),(p/'back-to-default/main.exe').read_bytes())
+   self.assertEqual(outlined['boot_profile'],'serial')
+   previous=p/'outlined/build-report.json'
+   for profile,constant in [('vi-clock-ntsc','MGX_BOOT_WII_VI_CLOCK_NTSC'),('vi-clock-27mhz','MGX_BOOT_WII_VI_CLOCK_27MHZ'),('si-poll-dormant','MGX_BOOT_WII_SI_POLL_DORMANT'),('serial',None)]:
+    dest=p/('profile-'+profile)
+    subprocess.run(outlined_args+['--boot-profile',profile,'--output',str(dest),'--reuse-report',str(previous)],check=True,capture_output=True,text=True,timeout=120)
+    result=json.loads((dest/'build-report.json').read_text())
+    self.assertEqual(result['boot_profile'],profile);self.assertEqual(result['compiled_objects'],1);self.assertEqual(result['reused_verified_objects'],7)
+    for record in result['objects']:
+     selected=[f for f in record['compile_key'] if f.startswith('-DMGX_STARTUP_PROFILE=')]
+     expected=['-DMGX_STARTUP_PROFILE='+constant] if constant and record['source'].endswith('/startup-probe/main.c') else []
+     self.assertEqual(selected,expected)
+    previous=dest/'build-report.json'
+   self.assertEqual((p/'outlined/main.exe').read_bytes(),(p/'profile-serial/main.exe').read_bytes())
    wrong=base.copy();wrong[-1]='1'
    result=subprocess.run(wrong+['--output',str(p/'wrong'),'--reuse-report',str(p/'first/build-report.json')],capture_output=True,text=True,timeout=15)
    self.assertNotEqual(result.returncode,0);self.assertFalse((p/'wrong/default.xbe').exists())

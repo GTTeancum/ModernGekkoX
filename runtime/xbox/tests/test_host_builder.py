@@ -39,6 +39,14 @@ class CacheTests(unittest.TestCase):
         new=self.compile();self.assertFalse(new["reused"]);self.assertEqual(old["object_sha256"],new["object_sha256"])
     def test_compiler_flags_invalidate(self):
         self.compile();self.command.append("-O1");self.assertFalse(self.compile()["reused"])
+    def test_machine_outliner_is_explicit_and_invalidates(self):
+        self.assertEqual(build.machine_outliner_flags(False), [])
+        flags = build.machine_outliner_flags(True)
+        self.assertEqual(flags, ["-mllvm", "-enable-machine-outliner=always"])
+        self.compile();self.command += flags
+        self.assertFalse(self.compile()["reused"]);self.assertTrue(self.compile()["reused"])
+        self.command = self.command[:-len(flags)]
+        self.assertFalse(self.compile()["reused"])
     def test_compiler_identity_invalidates(self):
         self.compile();self.identity={"sha256":"synthetic-new-toolchain"}
         self.assertFalse(self.compile()["reused"])
